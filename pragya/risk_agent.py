@@ -74,8 +74,16 @@ class RiskAgent:
             r = self.a.risk.set_index("holder_id").loc[resp.holders[0]]
             facts.append(f"{r['name']}: total credits {rupees(r['total_credits'])}, cash deposits "
                          f"{rupees(r['cash_deposits'])}, declared income {rupees(r['declared_income'])}.")
+        must = []
+        if resp.tool == "holder_profile" and resp.holders:
+            r = self.a.risk.set_index("holder_id").loc[resp.holders[0]]
+            must = [r["name"]] + [b["label"] for b in r["breakdown"]]
+        elif resp.tool == "risk_overview" and len(self.a.risk):
+            must = [self.a.risk.iloc[0]["name"]]
+        elif resp.tool == "gst" and "add-on" in text:
+            must = ["add-on"]
         return AgentResult(self.name, tool_names.get(resp.tool, resp.tool), ok=True, facts=facts, template=text,
-                           checked=checked, records=resp.df, fig=resp.fig, html=resp.html,
+                           checked=checked, records=resp.df, fig=resp.fig, html=resp.html, must=must,
                            steps=steps,
                            extra={"holders": resp.holders})
 
@@ -98,4 +106,5 @@ class RiskAgent:
         df = pd.DataFrame({"name": rows.name, "type": rows.holder_type.str.title(), "risk score": rows.risk_score,
                            "level": rows.risk_level, "finding": rows.holder_id.map(f)})
         return AgentResult(self.name, f"list: {label}", ok=True, facts=[head] + lines, template=text, checked=checked,
-                           records=df, steps=[f"Listed every holder with '{label}': {m} found."])
+                           records=df, steps=[f"Listed every holder with '{label}': {m} found."],
+                           must=[f"{m} people or firms"] + list(shown.name.head(6)))

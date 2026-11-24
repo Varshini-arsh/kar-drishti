@@ -124,6 +124,9 @@ class Lead:
         if plan:
             trace.append("Lead agent (rules) chose: " + ", ".join(dict.fromkeys(p for p, _ in plan)) + ".")
             return plan
+        if self.data.relevant(question):          # clearly about a loaded table: no plan call needed
+            trace.append("Lead agent (rules): the question is about the loaded tables, so the Data agent answers.")
+            return [("data", question)]
         if self.llm is not None and budget.take("plan"):
             try:
                 d = self.llm.chat_json([{"role": "system", "content": PLAN_SYSTEM},
@@ -211,43 +214,64 @@ class Lead:
 
     # ------------------------------------------------------------------ writing + checking
     def write(self, question: str, results: list, budget: Budget, trace: list) -> Answer:
+        """Model writes the non-law parts; law answers (exact quotes / 'Not stated') are always kept word for word,
+        and each agent's fixed lines (e.g. 'The officer decides the action.') are always added."""
         sources = [s for r in results for s in r.sources()]
         names = self.known_names()
-        template = "\n\n".join((f"**{r.agent}** · " if len(results) > 1 else "") + r.template for r in results)
-        law_only = all(r.agent == "Law agent" for r in results)
+        multi = len(results) > 1
+
+        def label(r):
+            return f"**{r.agent}** · " if multi else ""
+        law = [r for r in results if r.agent == "Law agent"]
+        rest = [r for r in results if r.agent != "Law agent"]
+        template = "\n\n".join(label(r) + r.template for r in results)
         text, source = template, "template"
-        if self.llm is not None and not law_only and budget.take("write"):
-            facts = "\n".join(f"[{r.agent} · {r.tool}]\n" + "\n".join(f"- {f}" for f in r.facts) for r in results)
+        if self.llm is not None and rest and budget.take("write"):
+            facts = "\n".join(f"[{r.agent} · {r.tool}]\n" + "\n".join(f"- {f}" for f in r.facts) for r in rest)
             msgs = [{"role": "system", "content": WRITE_SYSTEM.format(app=self.app_name)},
                     {"role": "user", "content": f"Question: {question}\n\nFACTS:\n{facts[:7000]}"}]
             try:
+                must = [m for r in rest for m in r.must]
+                if must:
+                    msgs[-1]["content"] += "\n\nYour answer MUST include, written exactly like this: " + "; ".join(must)
                 draft = self.llm.chat(msgs, purpose="write").strip()
-                res = checker.check(draft, sources, names, question)
-                trace.append("Checker on the model's answer: " + res.summary())
-                if res.ok:
-                    text, source = draft, "model"
-                elif budget.take("rewrite"):
+                res, missing = checker.check(draft, sources, names, question), [m for m in must if m not in draft]
+                trace.append("Checker on the model's answer: " + res.summary()
+                             + (f" Missing key facts: {', '.join(missing)}." if missing else ""))
+                if not (res.ok and not missing) and budget.take("rewrite"):
+                    fix = []
+                    if not res.ok:
+                        fix.append("These items are not in the FACTS: " + "; ".join(res.problems) + ".")
+                    if missing:
+                        fix.append("You left out these key facts; include them exactly: " + "; ".join(missing) + ".")
                     msgs += [{"role": "assistant", "content": draft},
-                             {"role": "user", "content": "These items are not in the FACTS: " + "; ".join(res.problems)
-                                                         + ". Rewrite using only the FACTS, copying numbers exactly."}]
+                             {"role": "user", "content": " ".join(fix) + " Rewrite using only the FACTS, copying "
+                                                                          "numbers exactly."}]
                     draft = self.llm.chat(msgs, purpose="write").strip()
-                    res = checker.check(draft, sources, names, question)
-                    trace.append("Checker on the retry: " + res.summary())
-                    if res.ok:
-                        text, source = draft, "model"
-                if source != "model":
+                    res, missing = checker.check(draft, sources, names, question), [m for m in must if m not in draft]
+                    trace.append("Checker on the retry: " + res.summary()
+                                 + (f" Missing key facts: {', '.join(missing)}." if missing else ""))
+                if res.ok and not missing:
+                    always = [a for r in rest for a in r.extra.get("always", []) if a not in draft]
+                    body = draft + ("\n" + "\n".join(always) if always else "")
+                    if multi:
+                        body = "**" + " + ".join(r.agent for r in rest) + "** · " + body
+                    text = "\n\n".join([body] + [label(r) + r.template for r in law])
+                    source = "model"
+                    if law:
+                        trace.append("The Law agent's part is shown word for word (exact quotes are never rewritten).")
+                else:
                     trace.append("Showing the template answer built from the tool output instead.")
             except LLMError as e:
                 trace.append(f"Local model unavailable ({e}); showing the template answer.")
         elif self.llm is None:
             trace.append("No local model connected; the answer is written by code from the tool output.")
-        elif law_only:
+        elif not rest:
             trace.append("Law answers show the exact quoted sentences, so no model rewriting is used.")
         final = checker.check(text, sources, names, question)
         trace.append("Checker on the answer shown: " + final.summary())
-        if not final.ok:                       # should not happen for templates; never show unchecked text
-            text = "\n".join(f"- {f}" for r in results for f in r.facts[:6])
-            source = "template"
+        if not final.ok:                       # never show unchecked text
+            text, source = template, "template"
             final = checker.check(text, sources, names, question)
         trace.append(f"Model calls used: {budget.used} of {budget.limit}"
                      + (f" ({', '.join(budget.log)})" if budget.log else "") + ".")

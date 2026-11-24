@@ -67,3 +67,14 @@ Plain-English notes, one line per change.
 - Sidebar "Officer profile": Name, Designation, Office and Domain (posting); saved on this computer and printed on every DRAFT signature. Settings keeps Model, Data and a Signature preview.
 - Questions outside the loaded data now get a clearly labelled general answer from the local model ("General answer · not from your loaded data ... verify it"), never presented as checked. Without a model the "I can't answer..." message stays.
 - Office-rule questions not covered by the loaded circulars (e.g. hotel allowance) still say "Not stated in the loaded documents" - no general guess.
+
+## Lessons from the first real-model run (qwen2.5:3b: 62/78, average 13.2 s)
+- Each agent now lists the key facts an answer must contain; a model answer that drops any of them gets one retry, then the code-written answer is shown.
+- Questions clearly about a loaded table go straight to the Data agent (no plan call), so the model can no longer wrongly refuse them.
+- If the model's SQL fails, the Data agent falls back to its built-in queries.
+
+## Second real-model run (qwen2.5:3b: 70/80, average 12.6 s) - fixes
+- In mixed answers the Law agent's part (exact quotes or "Not stated") is always shown word for word; the model only writes the other parts.
+- Fixed lines are always kept (e.g. "The officer decides the action.", the ageing total, the highest month).
+- Count / total / average questions on a table use the exact built-in query first (no model call), including "people and firms" style questions.
+- Greeting shows "A. Sharma" instead of "A.."

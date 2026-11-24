@@ -28,6 +28,7 @@ class AgentResult:
     html: str | None = None
     sql: str | None = None
     quotes: list = field(default_factory=list)          # Law agent: [{doc, number, date, text}]
+    must: list = field(default_factory=list)            # facts a model-written answer MUST contain word for word
     extra: dict = field(default_factory=dict)
     steps: list = field(default_factory=list)
 

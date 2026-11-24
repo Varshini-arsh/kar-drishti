@@ -105,16 +105,23 @@ def simple_sql(question: str, con) -> tuple[str, str] | None:
         after = _words(low[m.end():])
         group = next((c for c in txt + num if _col_words(c) and _col_words(c) <= after and c != measure), None) or next(
             (c for c in txt if (_col_words(c) - {"name", "id", "code"}) & after and c != measure), None)
-    where = []
+    where, found = [], []
+    low_v = re.sub(r"\bpeople\b", "persons", low)            # "people" means the PERSON value
     for c in txt:
         try:
             vals = [r[0] for r in con.execute(f'SELECT DISTINCT "{c}" FROM "{t}" LIMIT 300').fetchall()]
         except Exception:
             continue
-        for v in vals:
-            if isinstance(v, str) and len(v) >= 3 and re.search(r"(?<![a-z0-9])" + re.escape(v.lower()) + r"(?![a-z0-9])", low):
-                where.append(f'"{c}" = \'{v.replace(chr(39), chr(39) * 2)}\'')
-                break
+        hits = [v for v in vals if isinstance(v, str) and len(v) >= 3 and re.search(
+            r"(?<![a-z0-9])" + re.escape(v.lower()) + r"(e?s)?(?![a-z0-9])", low_v)]
+        if hits:
+            found.append((c, hits, len(hits) == len(vals)))
+    covered = {v.lower() for _, hits, full in found if full for v in hits}   # words that already mean "everyone"
+    for c, hits, full in found:
+        if full or all(v.lower() in covered for v in hits):
+            continue
+        quoted = ", ".join("'" + v.replace("'", "''") + "'" for v in hits)
+        where.append(f'"{c}" IN ({quoted})')
     w = (" WHERE " + " AND ".join(where)) if where else ""
     n = int(re.search(r"\btop (\d+)", low).group(1)) if re.search(r"\btop (\d+)", low) else 5
     if re.search(r"how many|count|number of", low):
@@ -145,6 +152,11 @@ class DataAgent:
         self.schema, self.schema_words = schema_for(con)
         self.gst = "TABLE gst_" in self.schema
 
+    def relevant(self, question: str) -> bool:
+        """True when the question names a loaded table or column (or matches a worked example)."""
+        return about_loaded_data(question, self.schema_words) or offline_example(question, self.gst) is not None \
+            or simple_sql(question, self.con) is not None
+
     def counts(self) -> str:
         tables = [r[0] for r in self.con.execute("SHOW TABLES").fetchall()]
         return f"{len(tables)} tables (" + ", ".join(tables[:8]) + (" …" if len(tables) > 8 else "") + ")"
@@ -154,9 +166,11 @@ class DataAgent:
         if not about_loaded_data(question, self.schema_words) and offline_example(question, self.gst) is None:
             return AgentResult(self.name, "none", ok=False, checked=checked,
                                steps=["The question does not mention anything in the loaded tables."])
-        sql, how, steps = None, "", []
+        sql, how, steps, df = None, "", [], None
         ex_first = offline_example(question, self.gst)        # a close worked example: no model call needed
-        if ex_first is not None:
+        rule_first = simple_sql(question, self.con) if ex_first is None and re.search(
+            r"how many|count|number of|total|sum|average|mean", question, re.I) else None
+        if ex_first is not None or rule_first is not None:   # exact built-in query: no model call needed
             llm = None
         if llm is not None and budget is not None and budget.take("sql"):
             try:
@@ -165,7 +179,10 @@ class DataAgent:
             except LLMError as e:
                 steps.append(f"Local model error: {e}")
                 sql, df = None, None
-        if sql is None:
+        if sql is None or df is None:            # no model, or the model's SQL failed: use the built-in queries
+            if sql is not None:
+                steps.append("Falling back to the built-in queries.")
+            sql = None
             ex = offline_example(question, self.gst)
             if ex is None:
                 rule = simple_sql(question, self.con)
@@ -183,8 +200,10 @@ class DataAgent:
         text, facts = self.describe(df)
         steps.append(f"Query returned {len(df):,} row(s).")
         fig = charts.auto_chart(df) if 2 <= len(df) <= 60 else None      # a chart only when it helps
+        must = [text.split(": ", 1)[1].rstrip(".")] if df.shape == (1, 1) else \
+            ([f"{len(df):,} record"] if len(df) > 1 else [])
         return AgentResult(self.name, "database query", ok=True, facts=facts, template=text, checked=checked,
-                           records=df, sql=sql, steps=steps, fig=fig)
+                           records=df, sql=sql, steps=steps, fig=fig, must=must)
 
     def _ask_model(self, question, llm, budget, known_ids):
         system = SQL_SYSTEM.format(schema=self.schema)

@@ -97,8 +97,10 @@ class RevenueAgent:
         text = "\n".join(facts[1:5])
         table = self.rev.rollup("range", w)[["region", "charge", "range", "target", "collected", "gap",
                                              "achieved_pct", "projected"]]
+        must = [rupees(s["target"]), rupees(s["collected"]), rupees(s["gap"]), rupees(s["projected"]),
+                rupees(s["monthly_pace_needed"])]
         return AgentResult(self.name, "revenue summary", True, facts, text, self.checked(), records=table,
-                           fig=self.chart(w), extra={"summary": s, "where": w},
+                           fig=self.chart(w), extra={"summary": s, "where": w}, must=must,
                            steps=["Summed range-level targets and collections; projection from last year's pattern."])
 
     def ranking(self, level: str, best: bool = False) -> AgentResult:
@@ -112,6 +114,7 @@ class RevenueAgent:
         text = facts[0] + "\nNext: " + "; ".join(f.rstrip(".") for f in facts[1:3]) + "." if len(facts) > 1 else facts[0]
         cols = [c for c in LEVELS[:LEVELS.index(level) + 1]] + ["target", "collected", "gap", "achieved_pct", "projected"]
         return AgentResult(self.name, f"{level} ranking", True, facts, text, self.checked(), records=g[cols],
+                           must=[str(top[level]), f"{top['achieved_pct']}%"],
                            steps=[f"Ranked every {level} by share of target collected."])
 
     def monthly(self) -> AgentResult:
@@ -124,6 +127,8 @@ class RevenueAgent:
         facts.append(f"Highest month: {_month_name(best.month)} with {rupees(best.collected)}.")
         facts.append(f"Collections for {len(done)} months of FY {self.rev.fy} are loaded.")
         return AgentResult(self.name, "monthly collections", True, facts, text, self.checked(),
+                           must=[_month_name(best.month), rupees(best.collected)],
+                           extra={"always": [f"Highest month: {_month_name(best.month)} with {rupees(best.collected)}."]},
                            records=m.fillna({"collected": 0}), fig=self.chart({}),
                            steps=["Summed collections by month, this year and last year."])
 
@@ -135,6 +140,7 @@ class RevenueAgent:
         facts.insert(0, f"Total outstanding demand {rupees(total)} as on {self.rev.as_on}.")
         text = "\n".join(facts[:1] + [f"- {f}" for f in facts[1:]])
         return AgentResult(self.name, "demand ageing", True, facts, text, self.checked(), records=a,
+                           must=[rupees(total)], extra={"always": [facts[0]]},
                            steps=["Grouped outstanding demands by how long ago they were raised."])
 
     def recovery(self, n: int = 10) -> AgentResult:
@@ -148,6 +154,7 @@ class RevenueAgent:
         facts += [f"{x.rank}. {x.taxpayer_name}: {x.reason}" for x in r.head(n).itertuples()]
         text = facts[0] + " Chase first (largest undisputed, no stay):\n" + "\n".join(f"- {f}" for f in facts[1:6])
         return AgentResult(self.name, "recovery list", True, facts, text, self.checked(), records=r,
+                           must=list(r.head(3).taxpayer_name),
                            steps=["Ranked outstanding demands: undisputed and no stay first, then largest first."])
 
     def taxpayer_demand(self, name: str) -> AgentResult:
@@ -166,7 +173,13 @@ class RevenueAgent:
         else:
             facts.append("All of it is disputed or stayed, so recovery depends on the appeal / stay; the officer decides.")
         text = "\n".join(facts)
-        return AgentResult(self.name, "taxpayer demand", True, facts, text, self.checked(), records=mine,
+        musts = [name, rupees(mine.outstanding.sum())] + ([rupees(clear.outstanding.sum()), "undisputed"] if len(clear) else [])
+        if ((mine.stay == "Yes")).any():
+            musts.append("stayed")
+        elif (mine.disputed == "Yes").any():
+            musts.append("disputed")
+        return AgentResult(self.name, "taxpayer demand", True, facts, text, self.checked(), records=mine, must=musts,
+                           extra={"always": ["The officer decides the action."]},
                            steps=[f"Found {name} in the demand register and its place on the ranked recovery list."])
 
     def refunds(self) -> AgentResult:
@@ -179,6 +192,7 @@ class RevenueAgent:
         facts = [f"{n} refunds issued this year, totalling {rupees(total)}."] + \
                 [f"{x[by.columns[0]]}: {rupees(x['refund_amount'])}" for _, x in by.iterrows()]
         return AgentResult(self.name, "refunds", True, facts, "\n".join(facts[:4]), self.checked(), records=by,
+                           must=[rupees(total)],
                            steps=["Summed the refunds file."])
 
     # ------------------------------------------------------------------ the one chart

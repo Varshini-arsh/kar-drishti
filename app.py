@@ -407,7 +407,9 @@ def render_answer(ans):
 
 
 def page_ask():
-    hello = f"Good to see you, {ui.esc(PROFILE.name.split()[0])}. " if PROFILE.is_set else ""
+    first = PROFILE.name.split()[0] if PROFILE.is_set else ""
+    shown = PROFILE.name.strip() if first.endswith(".") or len(first) <= 2 else first      # "A. Sharma", not "A."
+    hello = f"Good to see you, {ui.esc(shown)}. " if PROFILE.is_set else ""
     ui.header(f"Ask {branding.APP_NAME}", f"{hello}Cases, revenue, circulars or any loaded table, in plain English.")
     top = A.risk.iloc[0]["name"] if len(A.risk) else ""
     trail = case.holder_name(A.chains[0]["start_holder"]) if A.chains else ""
