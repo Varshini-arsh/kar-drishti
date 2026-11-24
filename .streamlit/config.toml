@@ -1,16 +1,40 @@
+# Pragya - Streamlit settings. Colours and font follow branding.py
+# (teal #0F766E accent, Inter font, light + dark mode).
+
 [browser]
 # keep everything offline: do not send usage statistics
 gatherUsageStats = false
 
 [client]
-# hide the "Deploy" button and developer menu
-toolbarMode = "minimal"
+# viewer menu: keeps Settings (light / dark mode), hides developer options
+toolbarMode = "viewer"
 
 [server]
 maxUploadSize = 200
+# serves the Inter font from ./static so it works without internet
+enableStaticServing = true
 
 [theme]
-base = "light"
+font = "Inter, Segoe UI, Arial, sans-serif"
+baseFontSize = 15
+baseRadius = "10px"
+buttonRadius = "8px"
+showWidgetBorder = true
+headingFontWeights = [700, 650, 600]
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "app/static/Inter-latin.woff2"
+weight = "100 900"
+style = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "app/static/Inter-latin-ext.woff2"
+weight = "100 900"
+style = "normal"
+
+[theme.light]
 primaryColor = "#0F766E"
 backgroundColor = "#FFFFFF"
 secondaryBackgroundColor = "#F5F5F4"
@@ -18,15 +42,26 @@ textColor = "#1C1917"
 borderColor = "#E7E5E4"
 dataframeBorderColor = "#E7E5E4"
 dataframeHeaderBackgroundColor = "#FAFAF9"
-showWidgetBorder = true
-baseRadius = "10px"
-buttonRadius = "8px"
-baseFontSize = 15
-headingFontWeights = [700, 650, 600]
 linkColor = "#0F766E"
 chartCategoricalColors = ["#0F766E", "#D97706", "#DC2626", "#78716C", "#14B8A6", "#A8A29E"]
 
-[theme.sidebar]
+[theme.light.sidebar]
 backgroundColor = "#FAFAF9"
 secondaryBackgroundColor = "#F0FDFA"
 borderColor = "#E7E5E4"
+
+[theme.dark]
+primaryColor = "#14B8A6"
+backgroundColor = "#141413"
+secondaryBackgroundColor = "#1F1E1C"
+textColor = "#F5F5F4"
+borderColor = "#3A3835"
+dataframeBorderColor = "#3A3835"
+dataframeHeaderBackgroundColor = "#1F1E1C"
+linkColor = "#2DD4BF"
+chartCategoricalColors = ["#14B8A6", "#F59E0B", "#F87171", "#A8A29E", "#5EEAD4", "#78716C"]
+
+[theme.dark.sidebar]
+backgroundColor = "#1A1918"
+secondaryBackgroundColor = "#123B37"
+borderColor = "#3A3835"

@@ -422,6 +422,83 @@ class Gen:
             self.truth["round_cash"].append(p["person_id"])
         self.truth_notes.append("round_cash: repeated cash withdrawals of exactly Rs 2.5L / 5L / 10L")
         self.build_gst(normal_firms, shell_clusters)
+        self.add_decoys_and_borderline()
+
+    # ------------------------------------------------------------ decoys and borderline cases
+    def add_decoys_and_borderline(self):
+        """Added LAST, so all the data above stays exactly the same.
+        Decoys look a little suspicious but stay below every rule's threshold: they must NOT be flagged.
+        Borderline cases sit just over a threshold: they MUST be flagged."""
+        self.decoys, self.borderline = [], []
+
+        def person(occ, income, receipts=0.0, filed=True):
+            p = self.add_person(occ, income, receipts=receipts, filed=filed)
+            acc = self.add_account(p["person_id"], "PERSON", p["city"], "Savings")
+            return p, acc
+
+        def cash_deposits(acc, n, lo, hi):
+            for _ in range(n):
+                self.external(acc, self.rand_date(), "CASH", "CR", round(float(self.rng.uniform(lo, hi)), -2),
+                              "SELF", "CASH DEPOSIT")
+
+        # decoy 1: shopkeeper with 7 deposits just below Rs 50,000 (the rule needs 8)
+        p, acc = person("Business", 900000, receipts=3_000_000)
+        cash_deposits(acc, 7, 45_500, 49_800)
+        for _ in range(30):
+            self.external(acc, self.rand_date(), "UPI", "CR", round(float(self.rng.uniform(40_000, 90_000)), 0),
+                          self.fake.name(), "CUSTOMER PAYMENT")
+        self.decoys.append({"holder_id": p["person_id"], "looks_like": "structuring",
+                            "why_not": "7 cash deposits just below Rs 50,000; the rule needs at least 8"})
+        # decoy 2: one-off flat sale, declared in the return (credits under 3x declared income)
+        p, acc = person("Salaried", 3_200_000)
+        self.external(acc, self.rand_date(), "RTGS", "CR", 7_500_000, "BUYER - FLAT SALE", "SALE OF FLAT - REGISTERED DEED")
+        self.external(acc, self.rand_date(), "RTGS", "DR", 6_000_000, "NEW HOME DEVELOPER", "PROPERTY PURCHASE")
+        self.decoys.append({"holder_id": p["person_id"], "looks_like": "income mismatch",
+                            "why_not": "large one-off sale credit, but total credits stay under 3x the declared income"})
+        # decoy 3: two round Rs 5 lakh cash withdrawals for a wedding (the rule needs 3)
+        p, acc = person("Professional", 2_400_000, receipts=4_000_000)
+        self.external(acc, self.rand_date(), "NEFT", "CR", 3_500_000, "CLIENT FEES", "PROFESSIONAL FEES")
+        for _ in range(2):
+            self.external(acc, self.rand_date(), "CASH", "DR", 500_000, "SELF", "CASH WITHDRAWAL - WEDDING")
+        self.decoys.append({"holder_id": p["person_id"], "looks_like": "round-figure cash",
+                            "why_not": "only 2 round-figure cash withdrawals; the rule needs at least 3"})
+        # decoy 4: salary moved to savings soon after it arrives (70%, the rule needs 85%)
+        p, acc = person("Salaried", 1_800_000)
+        for m in self.month_starts():
+            self.external(acc, m, "NEFT", "CR", 150_000, "EMPLOYER PVT LTD", "SALARY")
+            self.external(acc, m + timedelta(days=1), "NEFT", "DR", 105_000, "OWN SAVINGS ACCOUNT", "SELF TRANSFER")
+        self.decoys.append({"holder_id": p["person_id"], "looks_like": "pass-through",
+                            "why_not": "moves 70% of salary within 2 days; the rule needs 85% or more"})
+        # decoy 5: non-filer with small credits (under the Rs 10 lakh floor)
+        p, acc = person("Self-employed", 0, filed=False)
+        for _ in range(8):
+            self.external(acc, self.rand_date(), "UPI", "CR", round(float(self.rng.uniform(40_000, 90_000)), 0),
+                          self.fake.name(), "PAYMENT")
+        self.decoys.append({"holder_id": p["person_id"], "looks_like": "non-filer",
+                            "why_not": "no return filed, but credits stay under the Rs 10 lakh floor"})
+
+        # borderline 1: exactly 8 deposits just below Rs 50,000 -> structuring
+        p, acc = person("Salaried", 1_000_000)
+        cash_deposits(acc, 8, 45_500, 49_800)
+        self.borderline.append({"holder_id": p["person_id"], "pattern": "structuring",
+                                "why": "exactly 8 cash deposits just below Rs 50,000 (the minimum the rule needs)"})
+        # borderline 2: credits about 3.2x declared income -> income mismatch
+        p, acc = person("Salaried", 1_000_000)
+        for amt in (1_200_000, 1_000_000, 1_000_000):
+            self.external(acc, self.rand_date(), "RTGS", "CR", amt, self.fake.company(), "CONSULTANCY")
+        self.borderline.append({"holder_id": p["person_id"], "pattern": "income_mismatch",
+                                "why": "bank credits about 3.2x the declared income (the rule starts at 3x)"})
+        # borderline 3: exactly 3 round cash withdrawals of Rs 2 lakh -> round-figure cash
+        p, acc = person("Business", 2_000_000, receipts=6_000_000)
+        self.external(acc, self.rand_date(), "NEFT", "CR", 5_000_000, "CUSTOMERS", "SALES")
+        for _ in range(3):
+            self.external(acc, self.rand_date(), "CASH", "DR", 200_000, "SELF", "CASH WITHDRAWAL")
+        self.borderline.append({"holder_id": p["person_id"], "pattern": "round_cash",
+                                "why": "exactly 3 cash withdrawals of exactly Rs 2 lakh (the rule's minimum)"})
+        for b in self.borderline:
+            self.truth[b["pattern"]].append(b["holder_id"])
+        self.truth_notes.append("borderline: 3 cases sit just over a rule's threshold and must be flagged")
+        self.truth_notes.append("decoys: 5 people look a little suspicious but stay under every threshold")
 
     # ------------------------------------------------------------ GST layer
     def build_gst(self, normal_firms, shell_clusters):
@@ -520,7 +597,8 @@ def generate(out_dir: Path = config.DEMO_DIR, seed: int = config.DEMO_SEED, quie
     out_dir.mkdir(parents=True, exist_ok=True)
     for name, df in frames.items():
         df.to_csv(out_dir / f"{name}.csv", index=False)
-    truth = {"seed": seed, "notes": g.truth_notes, "planted": g.truth}
+    truth = {"seed": seed, "notes": g.truth_notes, "planted": g.truth,
+             "decoys": g.decoys, "borderline": g.borderline}
     (out_dir / "ground_truth.json").write_text(json.dumps(truth, indent=2))
     if not quiet:
         print(f"Synthetic case written to {out_dir}")

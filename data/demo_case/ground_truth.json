@@ -8,7 +8,9 @@
     "round_cash: repeated cash withdrawals of exactly Rs 2.5L / 5L / 10L",
     "gst_circular: shell firms invoice each other in a ring every month (mostly no e-way bills)",
     "gst_risky_itc: 3 ordinary-looking firms claim ITC on paper invoices bought from shell firms",
-    "gst_itc_passthrough: shell firms pay almost no GST in cash; credit offsets all output tax"
+    "gst_itc_passthrough: shell firms pay almost no GST in cash; credit offsets all output tax",
+    "borderline: 3 cases sit just over a rule's threshold and must be flagged",
+    "decoys: 5 people look a little suspicious but stay under every threshold"
   ],
   "planted": {
     "structuring": [
@@ -16,7 +18,8 @@
       "P0125",
       "P0126",
       "P0127",
-      "P0128"
+      "P0128",
+      "P0147"
     ],
     "round_trip": [
       "P0121",
@@ -43,7 +46,8 @@
       "P0132",
       "P0133",
       "P0134",
-      "P0135"
+      "P0135",
+      "P0148"
     ],
     "non_filer": [
       "P0136",
@@ -53,7 +57,8 @@
     "round_cash": [
       "P0139",
       "P0140",
-      "P0141"
+      "P0141",
+      "P0149"
     ],
     "shell_cluster": [
       "F0029",
@@ -100,5 +105,49 @@
       "F0010",
       "F0007"
     ]
-  }
+  },
+  "decoys": [
+    {
+      "holder_id": "P0142",
+      "looks_like": "structuring",
+      "why_not": "7 cash deposits just below Rs 50,000; the rule needs at least 8"
+    },
+    {
+      "holder_id": "P0143",
+      "looks_like": "income mismatch",
+      "why_not": "large one-off sale credit, but total credits stay under 3x the declared income"
+    },
+    {
+      "holder_id": "P0144",
+      "looks_like": "round-figure cash",
+      "why_not": "only 2 round-figure cash withdrawals; the rule needs at least 3"
+    },
+    {
+      "holder_id": "P0145",
+      "looks_like": "pass-through",
+      "why_not": "moves 70% of salary within 2 days; the rule needs 85% or more"
+    },
+    {
+      "holder_id": "P0146",
+      "looks_like": "non-filer",
+      "why_not": "no return filed, but credits stay under the Rs 10 lakh floor"
+    }
+  ],
+  "borderline": [
+    {
+      "holder_id": "P0147",
+      "pattern": "structuring",
+      "why": "exactly 8 cash deposits just below Rs 50,000 (the minimum the rule needs)"
+    },
+    {
+      "holder_id": "P0148",
+      "pattern": "income_mismatch",
+      "why": "bank credits about 3.2x the declared income (the rule starts at 3x)"
+    },
+    {
+      "holder_id": "P0149",
+      "pattern": "round_cash",
+      "why": "exactly 3 cash withdrawals of exactly Rs 2 lakh (the rule's minimum)"
+    }
+  ]
 }

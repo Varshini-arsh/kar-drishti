@@ -75,7 +75,12 @@ GST_NO_EWAY_MIN_COUNT = 5
 GST_NO_EWAY_MIN_SHARE = 0.5
 GST_RISKY_ITC_MIN = 500_000
 
-# Risk score weights (points, total capped at 100)
+# GST checks are an optional add-on (GST is administered by CBIC, not the Income Tax Department).
+# Off by default; switch on in the app (Load data page) or with KD_GST=1.
+GST_ENABLED = os.getenv("KD_GST", "0") == "1"
+
+# Risk score: each red flag adds weight x strength (0-1) points; total capped at 100.
+# The ML outlier model (Isolation Forest) is shown only as a hint and adds no points.
 RISK_WEIGHTS = {
     "structuring": 40,
     "round_trip": 55,
@@ -88,7 +93,6 @@ RISK_WEIGHTS = {
     "gst_itc_passthrough": 35,
     "gst_no_eway": 20,
     "gst_risky_itc": 40,
-    "anomaly": 15,               # scaled by Isolation Forest score
 }
 RISK_HIGH = 70
 RISK_MEDIUM = 35

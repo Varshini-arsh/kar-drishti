@@ -20,7 +20,7 @@ git config user.email >nul 2>nul
 if errorlevel 1 git config user.email "Varshini-arsh@users.noreply.github.com"
 
 git add -A
-git commit -m "Kar Drishti online demo" >nul 2>nul
+git commit -m "Pragya online demo" >nul 2>nul
 git branch -M main
 git remote remove origin >nul 2>nul
 git remote add origin %REPO%

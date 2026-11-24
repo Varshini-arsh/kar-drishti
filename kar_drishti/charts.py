@@ -9,17 +9,17 @@ import config
 from .data import Case
 
 NAVY, TEAL, AMBER, RED, SLATE, INK, MUTED = "#0F766E", "#14B8A6", "#D97706", "#DC2626", "#A8A29E", "#1C1917", "#78716C"
-FONT = "Source Sans Pro, Segoe UI, Arial, sans-serif"
+FONT = "Inter, Segoe UI, Arial, sans-serif"
 
 
 def _layout(fig, h=320, legend=True):
     fig.update_layout(
-        height=h, margin=dict(l=4, r=12, t=8, b=4), plot_bgcolor="white", paper_bgcolor="white",
-        font=dict(family=FONT, size=12, color="#44403C"), hoverlabel=dict(font_family=FONT, bgcolor="white"),
+        height=h, margin=dict(l=4, r=12, t=8, b=4), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family=FONT, size=12, color="#8A8580"), hoverlabel=dict(font_family=FONT, bgcolor="white"),
         showlegend=legend, legend=dict(orientation="h", y=1.08, x=0, font=dict(size=12), bgcolor="rgba(0,0,0,0)"),
         bargap=0.35)
-    fig.update_xaxes(showgrid=False, zeroline=False, linecolor="#E7E5E4", ticks="", automargin=True)
-    fig.update_yaxes(gridcolor="#F5F5F4", zeroline=False, ticks="", automargin=True)
+    fig.update_xaxes(showgrid=False, zeroline=False, linecolor="rgba(120,113,108,.35)", ticks="", automargin=True)
+    fig.update_yaxes(gridcolor="rgba(120,113,108,.15)", zeroline=False, ticks="", automargin=True)
     return fig
 
 
@@ -43,7 +43,7 @@ def cash_deposits_scatter(case: Case, holder_id: str):
     if c.empty:
         return None
     fig = go.Figure(go.Scatter(x=c.txn_date, y=c.amount, mode="markers",
-                               marker=dict(size=8, color=NAVY, opacity=.75, line=dict(width=1, color="white")),
+                               marker=dict(size=8, color=NAVY, opacity=.75, line=dict(width=0)),
                                customdata=c[["txn_id", "account_id"]],
                                hovertemplate="%{x|%d %b %Y}<br>₹%{y:,.0f}<br>%{customdata[0]} · %{customdata[1]}<extra></extra>"))
     fig.add_hline(y=config.CASH_PAN_THRESHOLD, line_dash="dot", line_color=RED, line_width=1.5,
@@ -79,9 +79,9 @@ def risk_donut(risk: pd.DataFrame):
     g = risk.risk_level.value_counts().reindex(order, fill_value=0)
     flagged = int(g["HIGH"] + g["MEDIUM"])
     fig = go.Figure(go.Pie(labels=["High", "Medium", "Low"], values=g.values, hole=.72, sort=False,
-                           marker=dict(colors=[RED, AMBER, "#E7E5E4"], line=dict(color="white", width=2)),
+                           marker=dict(colors=[RED, AMBER, "rgba(168,162,158,.30)"], line=dict(color="rgba(0,0,0,0)", width=2)),
                            textinfo="none", hovertemplate="%{label}: %{value} holders<extra></extra>"))
-    fig.add_annotation(text=f"<b style='font-size:26px;color:{INK}'>{flagged}</b><br>"
+    fig.add_annotation(text=f"<b style='font-size:26px;color:{TEAL}'>{flagged}</b><br>"
                             f"<span style='font-size:12px;color:{MUTED}'>need review</span>",
                        showarrow=False, x=.5, y=.5)
     fig = _layout(fig, 280)
@@ -95,7 +95,7 @@ def pattern_counts(findings: pd.DataFrame, labels: dict):
                            text=g.values, textposition="outside", cliponaxis=False,
                            hovertemplate="%{y}: %{x} holders<extra></extra>"))
     fig.update_xaxes(visible=False, range=[0, max(g.values) * 1.15 if len(g) else 1])
-    fig.update_yaxes(showgrid=False, tickfont=dict(size=12, color="#44403C"))
+    fig.update_yaxes(showgrid=False, tickfont=dict(size=12, color="#8A8580"))
     return _layout(fig, max(280, 26 * len(g) + 30), legend=False)
 
 
@@ -140,7 +140,7 @@ def auto_chart(df: pd.DataFrame):
         d = df.sort_values(y)
         fig = go.Figure(go.Bar(x=d[y], y=d[label].astype(str), orientation="h", marker_color=NAVY,
                                marker_cornerradius=4, hovertemplate="%{y}: %{x:,.0f}<extra></extra>"))
-        fig.update_xaxes(title=dict(text=y.replace("_", " "), font=dict(size=11, color=MUTED)), gridcolor="#F5F5F4")
+        fig.update_xaxes(title=dict(text=y.replace("_", " "), font=dict(size=11, color=MUTED)), gridcolor="rgba(120,113,108,.15)")
         fig.update_yaxes(showgrid=False)
         return _layout(fig, max(260, 24 * len(d) + 40), legend=False)
     return None

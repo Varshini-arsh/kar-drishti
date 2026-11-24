@@ -159,7 +159,8 @@ def load_case(folder: Path | str, name: str | None = None) -> Case:
     return Case(name=name or folder.name, ground_truth=truth, **dfs)
 
 
-def build_duckdb(case: Case, risk_scores: pd.DataFrame | None = None) -> duckdb.DuckDBPyConnection:
+def build_duckdb(case: Case, risk_scores: pd.DataFrame | None = None,
+                 include_gst: bool = True) -> duckdb.DuckDBPyConnection:
     """In-memory DuckDB with the case tables. The SQL agent gets a locked-down
     connection: no file or network access and no configuration changes."""
     con = duckdb.connect(database=":memory:")
@@ -172,12 +173,12 @@ def build_duckdb(case: Case, risk_scores: pd.DataFrame | None = None) -> duckdb.
     con.execute("CREATE TABLE holders AS SELECT * FROM _holders")
     con.execute("CREATE TABLE accounts AS SELECT * FROM _accounts")
     con.execute("CREATE TABLE transactions AS SELECT * FROM _tx")
-    if case.gst_invoices is not None and len(case.gst_invoices):
+    if include_gst and case.gst_invoices is not None and len(case.gst_invoices):
         gi = case.gst_invoices.copy()
         gi["invoice_date"] = pd.to_datetime(gi["invoice_date"]).dt.date
         con.register("_gi", gi)
         con.execute("CREATE TABLE gst_invoices AS SELECT * FROM _gi")
-    if case.gst_returns is not None and len(case.gst_returns):
+    if include_gst and case.gst_returns is not None and len(case.gst_returns):
         con.register("_gr", case.gst_returns)
         con.execute("CREATE TABLE gst_returns AS SELECT * FROM _gr")
     if risk_scores is not None and len(risk_scores):

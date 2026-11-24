@@ -1,0 +1,33 @@
+demand_id,pan,taxpayer_name,region,charge,range,assessment_year,date_raised,demand_amount,collected_so_far,outstanding,disputed,stay,appeal_status
+DM0001,UPXFG2479B,Ganesh Commodities,Region North (demo),Charge N1 (demo),Range N1-1,2024-25,2025-02-14,16900000,0,16900000,No,No,No appeal
+DM0002,UPXFG2479B,Ganesh Commodities,Region North (demo),Charge N1 (demo),Range N1-1,2020-21,2020-11-01,8000000,800000,7200000,Yes,No,Appeal pending
+DM0003,EUXFD5516D,Kuber Traders,Region North (demo),Charge N1 (demo),Range N1-2,2026-27,2026-06-07,42500000,0,42500000,Yes,Yes,Appeal pending
+DM0004,WDRFB7642X,Siddhi Commodities,Region North (demo),Charge N1 (demo),Range N1-3,2025-26,2025-05-02,12800000,1280000,11520000,No,No,No appeal
+DM0005,TGWFH7783W,Navkar Agencies,Region North (demo),Charge N2 (demo),Range N2-1,2023-24,2023-05-03,2700000,1350000,1350000,No,No,No appeal
+DM0006,TGWFH7783W,Navkar Agencies,Region North (demo),Charge N2 (demo),Range N2-1,2025-26,2025-12-07,36600000,9150000,27450000,No,No,No appeal
+DM0007,MRWFE1176L,Om Sai Exports,Region North (demo),Charge N2 (demo),Range N2-2,2023-24,2023-05-03,9400000,940000,8460000,Yes,No,Appeal pending
+DM0008,EXWFJ3778T,Shubh Infra Pvt Ltd,Region North (demo),Charge N2 (demo),Range N2-3,2020-21,2020-11-01,5300000,0,5300000,No,No,No appeal
+DM0009,LCSFT1630U,Ananta Solutions,Region South (demo),Charge S1 (demo),Range S1-1,2024-25,2024-05-02,19600000,9800000,9800000,No,No,No appeal
+DM0010,LCSFT1630U,Ananta Solutions,Region South (demo),Charge S1 (demo),Range S1-1,2020-21,2020-11-01,11000000,0,11000000,Yes,No,Appeal pending
+DM0011,NVWFS4000J,Riddhi Industries,Region South (demo),Charge S1 (demo),Range S1-2,2023-24,2023-05-03,25300000,2530000,22770000,No,No,No appeal
+DM0012,TBFFM9484U,Mahalaxmi Trading Co,Region South (demo),Charge S1 (demo),Range S1-3,2020-21,2020-11-01,31700000,0,31700000,Yes,Yes,Appeal pending
+DM0013,VEGFG7745N,Shree Balaji Enterprises,Region South (demo),Charge S2 (demo),Range S2-1,2025-26,2025-05-02,4900000,490000,4410000,No,No,No appeal
+DM0014,VEGFG7745N,Shree Balaji Enterprises,Region South (demo),Charge S2 (demo),Range S2-1,2025-26,2025-12-07,9600000,2400000,7200000,Yes,No,Appeal pending
+DM0015,EURFX6027C,Lakshmi Commodities,Region South (demo),Charge S2 (demo),Range S2-2,2025-26,2025-05-02,20100000,2010000,18090000,Yes,Yes,Appeal pending
+DM0016,XEBFV5055R,Vardhan Enterprises,Region South (demo),Charge S2 (demo),Range S2-3,2025-26,2025-05-02,24100000,12050000,12050000,Yes,Yes,Appeal pending
+DM0017,CTKPZ6723Y,Arjun Mehta,Region North (demo),Charge N1 (demo),Range N1-1,2020-21,2020-11-01,35200000,0,35200000,No,No,No appeal
+DM0018,CTKPZ6723Y,Arjun Mehta,Region North (demo),Charge N1 (demo),Range N1-1,2020-21,2020-11-01,30500000,15250000,15250000,No,No,No appeal
+DM0019,VWCPU6428K,Kavya Nair,Region North (demo),Charge N1 (demo),Range N1-2,2023-24,2023-05-03,27400000,13700000,13700000,Yes,Yes,Appeal pending
+DM0020,HREPE8865U,Rohit Bansal,Region North (demo),Charge N1 (demo),Range N1-3,2026-27,2026-06-07,30300000,7575000,22725000,No,No,No appeal
+DM0021,PUHPT2851L,Priya Iyer,Region North (demo),Charge N2 (demo),Range N2-1,2020-21,2020-11-01,24000000,12000000,12000000,No,No,No appeal
+DM0022,PUHPT2851L,Priya Iyer,Region North (demo),Charge N2 (demo),Range N2-1,2024-25,2024-05-02,6600000,0,6600000,Yes,No,Appeal pending
+DM0023,DJHPK5287A,Sanjay Kulkarni,Region North (demo),Charge N2 (demo),Range N2-2,2025-26,2025-05-02,23200000,2320000,20880000,Yes,No,Appeal pending
+DM0024,HWKPN1925J,Meera Joshi,Region North (demo),Charge N2 (demo),Range N2-3,2025-26,2025-05-02,28200000,14100000,14100000,No,No,No appeal
+DM0025,ZNAPT7927J,Imran Shaikh,Region South (demo),Charge S1 (demo),Range S1-1,2025-26,2025-12-07,17600000,0,17600000,No,No,No appeal
+DM0026,ZNAPT7927J,Imran Shaikh,Region South (demo),Charge S1 (demo),Range S1-1,2025-26,2025-12-07,33400000,8350000,25050000,No,No,No appeal
+DM0027,AWFPY4269J,Deepa Reddy,Region South (demo),Charge S1 (demo),Range S1-2,2025-26,2025-05-02,8700000,0,8700000,No,No,No appeal
+DM0028,VDAPU9331Z,Vikram Sethi,Region South (demo),Charge S1 (demo),Range S1-3,2026-27,2026-06-07,3000000,750000,2250000,Yes,No,Appeal pending
+DM0029,CDHPT9208V,Neha Kapoor,Region South (demo),Charge S2 (demo),Range S2-1,2023-24,2023-05-03,19000000,1900000,17100000,No,No,No appeal
+DM0030,CDHPT9208V,Neha Kapoor,Region South (demo),Charge S2 (demo),Range S2-1,2024-25,2024-05-02,21100000,10550000,10550000,Yes,No,Appeal pending
+DM0031,JYFPC4912C,Alok Verma,Region South (demo),Charge S2 (demo),Range S2-2,2025-26,2025-05-02,22500000,0,22500000,Yes,Yes,Appeal pending
+DM0032,SZCPC2606E,Farah Khan,Region South (demo),Charge S2 (demo),Range S2-3,2026-27,2026-06-07,25400000,0,25400000,Yes,No,Appeal pending

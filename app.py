@@ -1,6 +1,10 @@
 """
-Kar Drishti - Offline AI case analyst for Income Tax field officers.
+Pragya - Insight for every tax desk.
+An offline, multi-agent assistant for Indian Income Tax officers, built on the
+Kar Drishti risk engine (kar_drishti/). Name, tagline, logo and colour live in branding.py.
+
 Run:  streamlit run app.py
+Screens: Ask (home) · Cases · Revenue · Library, plus a small Settings icon.
 """
 from __future__ import annotations
 
@@ -20,9 +24,12 @@ def _reload_changed_modules():
     is enough after an update (no restart needed)."""
     import importlib
     import os
-    order = ["config", "kar_drishti.data", "kar_drishti.money_trail", "kar_drishti.link_finder", "kar_drishti.gst",
+    order = ["config", "branding", "pragya.profile", "pragya.system", "pragya.audit", "pragya.checker", "pragya.base",
+             "pragya.llm", "pragya.uploads", "pragya.revenue", "pragya.charts", "kar_drishti.data", "kar_drishti.money_trail", "kar_drishti.link_finder", "kar_drishti.gst",
              "kar_drishti.risk", "kar_drishti.charts", "kar_drishti.llm", "kar_drishti.sql_examples",
-             "kar_drishti.agents", "kar_drishti.report", "kar_drishti.statements", "kar_drishti.ui"]
+             "kar_drishti.agents", "kar_drishti.report", "kar_drishti.statements", "kar_drishti.ui",
+             "pragya.library", "pragya.risk_agent", "pragya.data_agent", "pragya.revenue_agent",
+             "pragya.law_agent", "pragya.selftest_risk", "pragya.lead"]
     loaded = [sys.modules[n] for n in order if n in sys.modules]
     changed = any(os.path.getmtime(m.__file__) > getattr(m, "_kd_loaded", 0) for m in loaded
                   if getattr(m, "__file__", None))
@@ -35,34 +42,59 @@ def _reload_changed_modules():
 def _stamp_modules():
     import os
     for n, m in list(sys.modules.items()):
-        if (n == "config" or n.startswith("kar_drishti.")) and getattr(m, "__file__", None):
+        if (n in ("config", "branding") or n.startswith(("kar_drishti.", "pragya."))) and getattr(m, "__file__", None):
             m._kd_loaded = os.path.getmtime(m.__file__)
 
 
 _reload_changed_modules()
 import config  # noqa: E402
 from kar_drishti import charts, gst, link_finder, money_trail, report, risk, ui  # noqa: E402
-from kar_drishti.agents import KarDrishti, llm_explain  # noqa: E402
+from kar_drishti.agents import llm_explain  # noqa: E402
 from kar_drishti.data import build_duckdb, load_case  # noqa: E402
-from kar_drishti.llm import LLMError, LocalLLM  # noqa: E402
+from kar_drishti.llm import LLMError  # noqa: E402
 from kar_drishti.money_trail import inr, inr_short  # noqa: E402
 
 _stamp_modules()
 
-st.set_page_config(page_title="Kar Drishti", page_icon=str(ROOT / "assets" / "icon.svg"), layout="wide",
+
+_reload_changed_modules()
+import branding  # noqa: E402
+import config  # noqa: E402
+from kar_drishti import charts, gst, link_finder, money_trail, report, risk, ui  # noqa: E402
+from kar_drishti.agents import llm_explain  # noqa: E402
+from kar_drishti.data import build_duckdb, load_case  # noqa: E402
+from kar_drishti.llm import LLMError  # noqa: E402
+from kar_drishti.money_trail import inr, inr_short  # noqa: E402
+from pragya import audit, uploads  # noqa: E402
+from pragya import profile as prof  # noqa: E402
+from pragya.lead import Lead  # noqa: E402
+from pragya.revenue import load_demo as load_demo_revenue, LEVELS, Revenue  # noqa: E402
+from pragya.revenue_agent import RevenueAgent  # noqa: E402
+from pragya.selftest_risk import risk_self_test  # noqa: E402
+from pragya.law_agent import LawAgent  # noqa: E402
+from pragya.library import Library, parse_document  # noqa: E402
+from pragya.llm import PragyaLLM, choose_model  # noqa: E402
+from pragya.system import memory_gb  # noqa: E402
+
+_stamp_modules()
+
+ASSETS = branding.asset_paths(ROOT / "assets")
+st.set_page_config(page_title=branding.page_title(), page_icon=ASSETS["icon"], layout="wide",
                    initial_sidebar_state="expanded")
 ui.inject_css()
-st.logo(str(ROOT / "assets" / "logo.svg"), size="large", icon_image=str(ROOT / "assets" / "icon.svg"))
+st.logo(ASSETS["logo"], size="large", icon_image=ASSETS["icon"])
 PC = ui.PLOTLY_CONFIG
-BOT = str(ROOT / "assets" / "icon.svg")
+BOT = ASSETS["icon"]
 LABEL = risk.PATTERN_LABEL
+PROFILE = st.session_state.setdefault("officer_profile",
+                                      prof.Profile() if config.PUBLIC_DEMO else prof.load_profile())
 
 
 # ====================================================================== data
-@st.cache_resource(show_spinner="Analysing case data on this computer...")
-def analyse_folder(path: str, stamp: float):
+@st.cache_resource(show_spinner="Checking the case data on this computer...")
+def analyse_folder(path: str, stamp: float, gst_on: bool):
     case = load_case(path)
-    return case, risk.analyze(case)
+    return case, risk.analyze(case, include_gst=gst_on)
 
 
 def ensure_demo():
@@ -72,19 +104,34 @@ def ensure_demo():
             generate(config.DEMO_DIR, config.DEMO_SEED, quiet=True)
 
 
+GST_ON = bool(st.session_state.setdefault("gst_on", config.GST_ENABLED))
+
+
 def current_case():
     if "uploaded_case" in st.session_state:
         return st.session_state["uploaded_case"]
     folder = Path(st.session_state.get("case_folder", str(config.DEMO_DIR)))
     if folder == config.DEMO_DIR:
         ensure_demo()
-    return analyse_folder(str(folder), (folder / "transactions.csv").stat().st_mtime)
+    return analyse_folder(str(folder), (folder / "transactions.csv").stat().st_mtime, GST_ON)
 
 
 case, A = current_case()
-case_key = f"{case.name}-{len(case.transactions)}-{id(A)}"
+case_key = f"{case.name}-{len(case.transactions)}-{id(A)}-{A.gst_on}"
 if st.session_state.get("con_key") != case_key:
-    st.session_state["con"] = build_duckdb(case, A.risk)
+    st.session_state["con"] = build_duckdb(case, A.risk, include_gst=A.gst_on)
+    # synthetic revenue demo files first, so uploaded files with the same type replace them
+    demo_rev = load_demo_revenue()
+    if demo_rev is not None:
+        for kind, attr in [("revenue targets", "targets"), ("collections", "collections"),
+                           ("last year's collections", "last_year"), ("demand register", "demands"),
+                           ("recovery actions", "actions"), ("refunds", "refunds")]:
+            if getattr(demo_rev, attr) is not None:
+                uploads.load_into_duckdb(st.session_state["con"], uploads.TABLE_NAME[kind], getattr(demo_rev, attr))
+    # every file added with "Add data" is loaded again (tables into DuckDB, documents for the Library)
+    st.session_state["up_tables"], st.session_state["up_docs"] = uploads.load_saved(st.session_state["con"])
+    st.session_state["revenue"] = Revenue.from_tables(
+        {t["kind"]: t["df"] for t in st.session_state["up_tables"]}, base=demo_rev)
     st.session_state["con_key"] = case_key
     st.session_state["chat"] = []
 con = st.session_state["con"]
@@ -135,8 +182,7 @@ def evidence_tables(ids: list[str]):
 
 def queue_table(df: pd.DataFrame, key: str, height: int | str = "auto"):
     q = df.copy()
-    q["patterns"] = q["flags"].map(lambda f: ", ".join(LABEL.get(x, x) for x in f if x != "anomaly")
-                                   + (" + ML outlier" if "anomaly" in f else ""))
+    q["patterns"] = q["breakdown"].map(lambda b: "  ·  ".join(f"{x['label']} +{x['points']:.0f}" for x in b))
     q["declared"] = [inr_short(v) if f else "Not filed" for v, f in zip(q.declared_income, q.filed)]
     q["credits"] = q.total_credits.map(inr_short)
     q["type"] = q.holder_type.str.title()
@@ -150,64 +196,245 @@ def queue_table(df: pd.DataFrame, key: str, height: int | str = "auto"):
                                        "risk_score": st.column_config.ProgressColumn("Risk", min_value=0, max_value=100,
                                                                                      format="%.0f", width="small"),
                                        "risk_level": st.column_config.TextColumn("Level", width="small"),
-                                       "patterns": st.column_config.TextColumn("What was found", width="large")})
+                                       "patterns": st.column_config.TextColumn("What was found (points)",
+                                                                               width="large")})
 
 
-# ====================================================================== sidebar: AI model
+
+
+# ====================================================================== local AI model
+def connect_model():
+    """Find the local model server and pick an INSTALLED model (never downloads one).
+    Returns (model or None, installed models, plain-English status)."""
+    cfg = st.session_state.setdefault("llm_cfg", {"provider": config.LLM_PROVIDER, "url": config.LLM_BASE_URL,
+                                                   "model": None, "wanted": None})
+    llm, models, msg = None, [], ""
+    try:
+        models = PragyaLLM(cfg["provider"], cfg["url"]).list_models()
+    except LLMError as e:
+        msg = str(e)
+    if models:
+        free, _ = memory_gb()
+        cfg["model"], note = choose_model(models, free, cfg.get("wanted"))
+        llm = PragyaLLM(cfg["provider"], cfg["url"], cfg["model"])
+        msg = note + " Temperature 0, fixed seed, thinking off."
+    elif config.PUBLIC_DEMO and not config.LLM_EXPECTED:
+        msg = "Not available in this online demo. All screens still work."
+    elif config.PUBLIC_DEMO:
+        msg = "The AI model is starting up. Refresh in a minute."
+    else:
+        msg = msg or "Start Ollama: open PowerShell and run  ollama serve"
+    return llm, models, msg
+
+
+LLM, MODELS, MODEL_MSG = connect_model()
+def build_library() -> Library:
+    """Demo circulars + every document added with Add data (+ an uploaded section mapping table)."""
+    lib = Library.from_folder(embed_url=st.session_state["llm_cfg"]["url"]
+                              if st.session_state["llm_cfg"]["provider"] == "ollama" else None)
+    for d in st.session_state.get("up_docs", []):
+        lib.add(parse_document(d["name"], d["text"], d["kind"], source="added"))
+    for t in st.session_state.get("up_tables", []):
+        if {"section_1961", "section_2025"} <= set(t["df"].columns):
+            lib.section_map = t["df"]
+    if LLM is not None:
+        lib.try_embeddings()
+    return lib
+
+
+lib_key = (st.session_state.get("con_key"), LLM is not None)
+if st.session_state.get("lib_key") != lib_key:
+    st.session_state["library"], st.session_state["lib_key"] = build_library(), lib_key
+LIB = st.session_state["library"]
+REV = st.session_state.get("revenue")
+AGENT = Lead(case, A, con, LLM, revenue=RevenueAgent(REV) if REV is not None else None, law=LawAgent(LIB),
+             app_name=branding.APP_NAME)
+
+
+# ====================================================================== Add data (one button, any file)
+@st.dialog("Add data", width="large")
+def add_data_dialog():
+    st.caption("CSV, Excel, JSON, TXT, Word or PDF. Each file is recognised from its columns or text; correct the "
+               "type if needed, then load. Files stay on this computer.")
+    files = st.file_uploader("Files", accept_multiple_files=True, label_visibility="collapsed",
+                             type=["csv", "xlsx", "xls", "xlsm", "json", "txt", "md", "docx", "pdf"])
+    picks = []
+    for i, f in enumerate(files or []):
+        data = f.getvalue()
+        p = uploads.read_file(f.name, data)
+        with st.container(border=True):
+            size = f"{p.size / 1024:,.0f} KB" if p.size >= 1024 else f"{p.size} bytes"
+            st.markdown(f"**{ui.esc(f.name)}** · {size} · SHA-256 `{p.sha256[:12]}…`")
+            if p.note:
+                st.warning(p.note, icon=":material/warning:")
+            kinds = uploads.TABLE_KINDS if p.is_table else uploads.TEXT_KINDS
+            kind = st.selectbox(f"Recognised as: {p.kind}", kinds, index=kinds.index(p.kind) if p.kind in kinds else 0,
+                                key=f"kind-{p.sha256}", help=p.reason)
+            if p.is_table:
+                rows = sum(len(d) for _, d in p.tables)
+                with st.expander(f"Show records · {rows:,} row{'s' if rows != 1 else ''}"
+                                 + (f" in {len(p.tables)} sheets" if len(p.tables) > 1 else "")):
+                    st.dataframe(p.tables[0][1].head(20), hide_index=True, width="stretch")
+            elif p.text:
+                with st.expander(f"Show text · {len(p.text):,} characters"):
+                    st.text(p.text[:2000])
+        if p.is_table or p.text:
+            picks.append((p, data, kind))
+    if picks and st.button(f"Load {len(picks)} file{'s' if len(picks) != 1 else ''}", type="primary",
+                           icon=":material/check:"):
+        for p, data, kind in picks:
+            uploads.save_upload(p, data, kind, tables=[uploads.TABLE_NAME.get(kind, "uploaded table")] if p.is_table else [])
+        st.session_state["con_key"] = None            # rebuild the database with the new files
+        st.toast(f"Loaded {len(picks)} file(s).", icon=":material/check_circle:")
+        st.rerun()
+
+
+# ====================================================================== sidebar
+def sidebar():
+    with st.sidebar:
+        st.page_link(PAGES["ask"], label="Ask", icon=":material/forum:")
+        st.page_link(PAGES["cases"], label="Cases", icon=":material/person_search:")
+        st.page_link(PAGES["revenue"], label="Revenue", icon=":material/payments:")
+        st.page_link(PAGES["library"], label="Library", icon=":material/menu_book:")
+        if not config.PUBLIC_DEMO and st.button("Add data", icon=":material/upload_file:", width="stretch"):
+            add_data_dialog()
+        st.divider()
+        st.caption(f"**{case.name}** · {S['holders']} people and firms · {S['transactions']:,} transactions")
+        if case.name == config.DEMO_DIR.name:
+            st.caption(branding.DEMO_DATA_LABEL)
+        ui.ai_status(LLM is not None, st.session_state["llm_cfg"]["model"] or config.LLM_MODEL, MODEL_MSG)
+        st.page_link(PAGES["settings"], label="Settings", icon=":material/settings:")
+        if PROFILE.is_set:
+            st.caption(f"{PROFILE.name} · {PROFILE.rank} · {PROFILE.posting}")
+
+
 if config.PUBLIC_DEMO:
-    st.markdown("<div style='background:#FFFBEB;border:1px solid #FDE68A;color:#92400E;border-radius:10px;"
+    st.markdown("<div style='background:rgba(217,119,6,.12);border:1px solid rgba(217,119,6,.35);border-radius:10px;"
                 "padding:8px 12px;font-size:.85rem;margin-bottom:10px'><b>Online demo</b> · all names, PANs and "
-                "transactions are synthetic (fake). Uploading real data is disabled. The real tool runs fully offline "
+                "transactions are synthetic. Uploading real data is disabled. The real tool runs fully offline "
                 "on the officer's own computer.</div>", unsafe_allow_html=True)
 
-with st.sidebar:
-    st.caption(f"**{case.name}** · {S['holders']} holders · {S['transactions']:,} transactions")
-    probe_cfg = st.session_state.setdefault("llm_cfg", {"provider": config.LLM_PROVIDER,
-                                                         "url": config.LLM_BASE_URL, "model": None})
-    LLM, models, status_msg = None, [], ""
-    try:
-        probe = LocalLLM(probe_cfg["provider"], probe_cfg["url"], config.LLM_MODEL)
-        models = probe.list_models()
-    except LLMError as e:
-        status_msg = str(e)
-    if models:
-        if probe_cfg["model"] not in models:
-            probe_cfg["model"] = config.LLM_MODEL if config.LLM_MODEL in models else next(
-                (m for m in models if m.startswith("qwen2.5")), models[0])
-        LLM = LocalLLM(probe_cfg["provider"], probe_cfg["url"], probe_cfg["model"])
-        ok, status_msg = LLM.status()
-        if not ok:
-            LLM = None
+
+# ====================================================================== Ask (home)
+def md_lines(text: str) -> str:
+    """Keep the answer's line breaks in Markdown: '- ' lines become a list, other lines stay on their own line."""
+    import re
+    text = re.sub(r"\n(?=- )", "\n\n", text)
+    return re.sub(r"(?<!\n)\n(?!\n|- )", "  \n", text)
+
+
+def show_quotes(r):
+    """Exact quotes; a conflict is shown side by side with the later document marked."""
+    if not r.quotes:
+        return
+    if r.extra.get("status") == "conflict":
+        cols = st.columns(len(r.quotes))
+        for c, q in zip(cols, r.quotes):
+            with c:
+                ui.quote_card(q)
+        st.warning("These documents give different answers on the same point. An officer must decide which applies.",
+                   icon=":material/balance:")
     else:
-        if config.PUBLIC_DEMO and not config.LLM_EXPECTED:
-            status_msg = "Not available in this online demo. All analysis pages work."
-        elif config.PUBLIC_DEMO:
-            status_msg = "The AI model is starting up. Refresh in a minute."
-        else:
-            status_msg = status_msg or "Start Ollama: open PowerShell and run  ollama serve"
-    ui.ai_status(LLM is not None, probe_cfg["model"] or config.LLM_MODEL, status_msg)
-    with st.expander("Model settings"):
-        prov = st.selectbox("Server", ["ollama", "openai"], index=0 if probe_cfg["provider"] == "ollama" else 1,
-                            format_func=lambda p: "Ollama" if p == "ollama" else "LM Studio / llama.cpp")
-        url = st.text_input("Address", probe_cfg["url"])
-        mdl = st.selectbox("Model", models, index=models.index(probe_cfg["model"])) if models else None
-        if (prov, url, mdl) != (probe_cfg["provider"], probe_cfg["url"], probe_cfg["model"]):
-            probe_cfg.update(provider=prov, url=url, model=mdl)
-            st.rerun()
-        st.caption("Only local addresses are allowed. No data leaves this computer.")
-
-AGENT = KarDrishti(case, A, con, LLM)
+        for q in r.quotes:
+            ui.quote_card(q)
 
 
-# ====================================================================== pages
-def page_dashboard():
+def render_answer(ans):
+    """3-6 plain lines, then a card / chart / table only if useful, then 'How I got this'."""
+    chips = "".join(f"<span class='kd-chip'>{ui.esc(r.agent)}</span>" for r in ans.results)
+    if chips:
+        st.markdown(chips, unsafe_allow_html=True)
+    text = ans.text
+    if len(ans.results) == 1 and ans.results[0].quotes:          # law answer: one line, then the quote cards
+        st_ = ans.results[0].extra.get("status")
+        text = text.split("\n")[0] if st_ in ("conflict", "same") else f"{ans.results[0].quotes[0]['doc']} says:"
+    st.markdown(md_lines(text))
+    for r in ans.results:
+        show_quotes(r)
+        if r.fig is not None:
+            st.plotly_chart(r.fig, width="stretch", config=PC)
+        if r.html:
+            embed_html(r.html, 520)
+        if r.records is not None and len(r.records):
+            with st.expander(f"Show records · {r.agent} · {len(r.records):,}"):
+                d = tx_view(r.records) if "txn_id" in r.records.columns else r.records
+                cfg = TX_CONFIG if "txn_id" in r.records.columns else {
+                    c: st.column_config.NumberColumn(str(c).replace("_", " "), format="localized")
+                    for c in d.columns if pd.api.types.is_numeric_dtype(d[c]) and not str(c).endswith("_id")}
+                st.dataframe(d, hide_index=True, width="stretch", height=min(380, 40 + 35 * len(d)), column_config=cfg)
+    with st.expander("How I got this"):
+        if ans.results:
+            st.dataframe(pd.DataFrame([{"agent": r.agent, "tool": r.tool, "checked": r.checked}
+                                       for r in ans.results]), hide_index=True, width="stretch")
+        lines = [ln for ln in ans.trace if not ln.startswith("Checker on the answer shown")]
+        st.markdown("\n".join(("    - " if ln.startswith("   ") else "- ") + ln.strip().replace("*", "\\*")
+                               for ln in lines))
+        for r in ans.results:
+            if r.sql:
+                st.code(r.sql, language="sql")
+        if ans.check is not None:
+            (st.success if ans.check.ok else st.error)("Checker: " + ans.check.summary(), icon=":material/verified:")
+        st.caption(f"Written by {'the local model' if ans.source == 'model' else 'code from the tool output'} · "
+                   f"{ans.seconds:.1f} s. Numbers come from code run on the data, never from the AI's memory.")
+
+
+def page_ask():
+    hello = f"Good to see you, {PROFILE.name.split()[0]}." if PROFILE.is_set else "Ask in plain English."
+    ui.header(f"Ask {branding.APP_NAME}", f"{hello} I check the loaded data and documents, and show how I got "
+                                          "each answer.")
+    if not PROFILE.is_set:
+        st.caption("Tip: set your name, rank and posting in Settings to get starter questions for your desk.")
+    if LLM is None:
+        st.caption("The local AI model is not connected, so answers use ready-made templates. Questions about cases, "
+                   "money trails and links still work.")
+    top = A.risk.iloc[0]["name"] if len(A.risk) else ""
+    trail = case.holder_name(A.chains[0]["start_holder"]) if A.chains else ""
+    starters = prof.starter_questions(PROFILE, top=top, trail=trail)
+    clicked = st.pills("Try", starters, selection_mode="single", key=f"pill-{len(st.session_state['chat'])}",
+                       label_visibility="collapsed")
+    for item in st.session_state["chat"]:
+        with st.chat_message("user", avatar=":material/person:"):
+            st.write(item.question)
+        with st.chat_message("assistant", avatar=BOT):
+            render_answer(item)
+    q = st.chat_input("Ask about cases, revenue, circulars or any loaded table") or clicked
+    if q:
+        with st.chat_message("user", avatar=":material/person:"):
+            st.write(q)
+        with st.chat_message("assistant", avatar=BOT):
+            with st.spinner("Checking the data and the numbers..."):
+                ans = AGENT.ask(q)
+            render_answer(ans)
+        st.session_state["chat"].append(ans)
+        st.rerun()
+
+
+# ====================================================================== Cases
+def page_cases():
+    if st.session_state.get("case_open"):
+        return case_detail(st.session_state["case_open"])
     r = A.risk
     n_high, n_med = int((r.risk_level == "HIGH").sum()), int((r.risk_level == "MEDIUM").sum())
-    ui.header("Overview", f"{S['date_from']:%d %b %Y} to {S['date_to']:%d %b %Y} · analysed on this computer")
+    ui.header("Cases", f"{S['date_from']:%d %b %Y} to {S['date_to']:%d %b %Y} · checked on this computer · "
+                       + ("income-tax checks + GST signals" if A.gst_on else "income-tax checks (GST add-on off)"))
+    view = st.segmented_control("View", ["Review queue", "Self-test on demo data"], default="Review queue",
+                                label_visibility="collapsed") if case.ground_truth else "Review queue"
+    if view == "Self-test on demo data":
+        return self_test_view()
     ui.kpis([("People and firms", f"{S['holders']}", f"{S['persons']} people · {S['firms']} firms"),
              ("Transactions", f"{S['transactions']:,}", f"{S['accounts']} bank accounts"),
              ("Money in", inr_short(S["total_credits"]), "total credits"),
              ("Need review", f"{n_high + n_med}", f"{n_high} high · {n_med} medium", "red")])
+    ui.section("Review queue")
+    st.caption("Highest risk first. Click a row to open the case.")
+    qv = st.session_state.setdefault("queue_v", 0)
+    flagged = r[r.risk_level != "LOW"]
+    st.caption(f"Showing all {len(flagged)} of {len(r)} people and firms that need review (the rest have no red flag).")
+    ev = queue_table(flagged, f"queue-{qv}")
+    if ev and ev.selection.rows:
+        st.session_state["case_open"] = flagged.iloc[ev.selection.rows[0]]["holder_id"]
+        st.session_state["queue_v"] = qv + 1
+        st.rerun()
     a, b = st.columns(2, gap="medium")
     with a:
         ui.section("Risk split")
@@ -216,23 +443,46 @@ def page_dashboard():
         ui.section("What was found")
         if len(A.findings):
             st.plotly_chart(charts.pattern_counts(A.findings, LABEL), width="stretch", config=PC)
-    ui.section("Review queue")
-    st.caption("Sorted by risk. Click a row to open the case.")
-    qv = st.session_state.setdefault("queue_v", 0)
-    ev = queue_table(r[r.risk_level != "LOW"], f"queue-{qv}")
-    if ev and ev.selection.rows:
-        hid = r[r.risk_level != "LOW"].iloc[ev.selection.rows[0]]["holder_id"]
-        st.session_state["selected_holder"] = hid
-        st.session_state["queue_v"] = qv + 1          # fresh table (no selection) when coming back
-        st.switch_page(PAGES["case"])
+    how_it_works()
 
 
-def page_case():
+def self_test_view():
+    """Honest results of the risk rules on the synthetic demo data (planted, borderline, decoys, false alarms)."""
+    t = risk_self_test(case, A)
+    ui.kpis([("Planted cases caught", f"{t['caught']} of {t['planted']}", "every planted case should be caught",
+              "" if t["caught"] == t["planted"] else "red"),
+             ("Borderline caught", f"{t['borderline_caught']} of {t['borderline_total']}", "just over a threshold",
+              "" if t["borderline_caught"] == t["borderline_total"] else "red"),
+             ("Decoys wrongly flagged", f"{t['decoys_flagged']} of {t['decoys_total']}", "look suspicious, under every threshold",
+              "red" if t["decoys_flagged"] else ""),
+             ("Other false alarms", f"{t['false_alarms']}", "flagged but not planted", "amber" if t["false_alarms"] else "")])
+    st.caption("The demo data is synthetic and these cases were planted on purpose, so this shows the rules work as "
+               "designed. It is not proof of real-world accuracy: real cases are messier and every flag needs an "
+               "officer's review." + ("" if t["gst_on"] else " GST signals are not judged (add-on off)."))
+    ui.section("Borderline cases")
+    st.dataframe(t["borderline"], hide_index=True, width="stretch")
+    ui.section("Decoys")
+    st.dataframe(t["decoys"], hide_index=True, width="stretch")
+    if t["false_alarms"]:
+        ui.section("Other false alarms")
+        st.dataframe(t["false_alarm_table"], hide_index=True, width="stretch")
+    with st.expander("Show records · result for every red-flag rule"):
+        st.dataframe(t["per_pattern"], hide_index=True, width="stretch")
+
+
+def case_detail(hid):
     ids = A.risk.holder_id.tolist()
-    sel = st.session_state.get("selected_holder", ids[0])
-    hid = st.selectbox("Choose a person or firm", ids, index=ids.index(sel) if sel in ids else 0,
-                       format_func=holder_label)
-    st.session_state["selected_holder"] = hid
+    if hid not in ids:
+        st.session_state.pop("case_open", None)
+        st.rerun()
+    c1, c2 = st.columns([1, 3])
+    if c1.button("Back to queue", icon=":material/arrow_back:"):
+        st.session_state.pop("case_open", None)
+        st.rerun()
+    pick = c2.selectbox("Case", ids, index=ids.index(hid), format_func=holder_label, label_visibility="collapsed")
+    if pick != hid:
+        st.session_state["case_open"] = pick
+        st.rerun()
     r = RISK.loc[hid]
     h = case.holders.set_index("holder_id").loc[hid]
     is_firm = h["holder_type"] == "FIRM"
@@ -240,6 +490,31 @@ def page_case():
             f"PAN {h['pan']}" if pd.notna(h["pan"]) and h["pan"] else ""]
     st.markdown(f"<div class='kd-profile'><div class='n'>{ui.esc(r['name'])}{ui.badge(r['risk_level'])}</div>"
                 f"<div class='sub'>{ui.esc(' · '.join(b for b in bits if b))}</div></div>", unsafe_allow_html=True)
+
+    names = ["Summary", "Evidence", "Money trail", "Links"]
+    show_gst = A.gst_on and gst.has_gst(case) and (
+        hid in set(case.gst_invoices.seller_firm_id) | set(case.gst_invoices.buyer_firm_id))
+    if show_gst:
+        names.append("GST")
+    names.append("Report")
+    tabs = dict(zip(names, st.tabs(names)))
+    with tabs["Summary"]:
+        summary_tab(hid, r, h, is_firm)
+    with tabs["Evidence"]:
+        evidence_tab(hid)
+    with tabs["Money trail"]:
+        money_trail_tab(hid, r)
+    with tabs["Links"]:
+        links_tab(hid)
+    if show_gst:
+        with tabs["GST"]:
+            st.caption("GST signals for income-tax risk (optional add-on).")
+            gst_tab(hid)
+    with tabs["Report"]:
+        report_tab(hid)
+
+
+def summary_tab(hid, r, h, is_firm):
     if not r["filed"]:
         declared = ("Declared income", "Not filed", "no ITR for the year", "red")
     elif is_firm or h["gross_receipts"] > 0:
@@ -248,274 +523,223 @@ def page_case():
         declared = ("Declared income", inr_short(r["declared_income"]), "as per ITR")
     ratio = r["total_credits"] / max(h["gross_receipts"] if h["gross_receipts"] > 0 else r["declared_income"], 1)
     tone = {"HIGH": "red", "MEDIUM": "amber"}.get(r["risk_level"], "")
-    ui.kpis([("Risk score", f"{r['risk_score']:.0f} / 100", f"ML anomaly {r['anomaly']:.2f}", tone),
+    n_flags = len(r["breakdown"])
+    ui.kpis([("Risk score", f"{r['risk_score']:.0f} / 100",
+              f"{n_flags} red flag{'s' if n_flags != 1 else ''} · {r['points']:.0f} points", tone),
              declared,
              ("Money in", inr_short(r["total_credits"]), f"{ratio:,.1f}× declared" if r["filed"] else "total credits"),
              ("Cash deposits", inr_short(r["cash_deposits"]), "total in the year")])
-
-    tab1, tab_c, tab2, tab3 = st.tabs(["Findings", "Charts", "Money trail", "Transactions"])
-    with tab1:
-        f = A.findings[A.findings.holder_id == hid]
-        if f.empty and "anomaly" not in r["flags"]:
-            st.success("No suspicious pattern detected for this holder.")
-        for fr in f.itertuples(index=False):
-            ui.finding_card(LABEL.get(fr.pattern, fr.pattern), fr.summary, fr.severity,
-                            f"severity {fr.severity:.2f}")
-            if fr.evidence:
-                with st.expander(f"Evidence · {len(fr.evidence)} record(s)"):
-                    evidence_tables(fr.evidence)
-        if "anomaly" in r["flags"]:
-            ui.finding_card(LABEL["anomaly"], "Behaviour is in the top 10% most unusual compared with other holders "
-                                              "(Isolation Forest).", r["anomaly"], f"score {r['anomaly']:.2f}")
-        key = f"explain-{case_key}-{hid}"
-        if st.button("Explain with AI", icon=":material/auto_awesome:", disabled=LLM is None,
-                     help=None if LLM else "Start Ollama to enable"):
-            row = r.copy()
-            row["holder_id"] = hid
-            fb = risk.explain_holder_text(row)
-            with st.spinner("Local model is writing the explanation..."):
-                st.session_state[key] = llm_explain(LLM, f"Explain to the officer why {r['name']} was flagged.", fb, fb)[0]
-        if key in st.session_state:
-            ui.note(st.session_state[key])
-    with tab_c:
-        a, b = st.columns(2, gap="medium")
-        with a:
-            ui.section("Monthly money in / out")
-            st.plotly_chart(charts.monthly_flows(case, hid), width="stretch", config=PC)
-        with b:
-            ui.section("Cash deposits")
-            sc = charts.cash_deposits_scatter(case, hid)
-            if sc:
-                st.plotly_chart(sc, width="stretch", config=PC)
-            else:
-                st.caption("No cash deposits.")
-    with tab2:
-        c1, c2 = st.columns(2)
-        min_amt = c1.select_slider("Minimum transfer", [50_000, 100_000, 200_000, 500_000, 1_000_000], 100_000,
-                                   format_func=inr_short)
-        depth = c2.slider("Hops to follow", 1, 4, 3)
-        edges = money_trail.trace_funds(case, hid, depth=depth, min_amount=min_amt)
-        fig = charts.sankey(edges)
-        if fig:
-            back = edges[edges.target.str.split("|").str[1] == r["name"]]
-            if len(back):
-                st.warning(f"{inr(back.amount.sum())} came back to {r['name']} through other entities — "
-                           "possible round-tripping.", icon=":material/sync_problem:")
-            st.plotly_chart(fig, width="stretch", config=PC)
-            st.caption("Blue = inside this case · red = left the case (outside party) · red links = money returning "
-                       "to the start.")
+    ui.score_breakdown(r["breakdown"], r["points"], r["risk_score"], r["floored"], config.RISK_HIGH,
+                       config.RISK_MEDIUM)
+    f = A.findings[A.findings.holder_id == hid]
+    if f.empty:
+        st.success("No suspicious pattern found for this person or firm.")
+    for fr in f.itertuples(index=False):
+        ui.finding_card(LABEL.get(fr.pattern, fr.pattern), fr.summary, fr.severity,
+                        f"+{config.RISK_WEIGHTS.get(fr.pattern, 10) * fr.severity:.0f} points")
+    if r["outlier"]:
+        st.caption(f"Hint (not counted in the score): a machine-learning outlier model finds this behaviour unusual "
+                   f"compared with others (score {r['anomaly']:.2f}, top 10%). Only the red flags above count.")
+    key = f"explain-{case_key}-{hid}"
+    if st.button("Explain in plain English", icon=":material/auto_awesome:", type="primary", disabled=LLM is None,
+                 help=None if LLM else "Needs the local AI model (see Settings)"):
+        row = r.copy()
+        row["holder_id"] = hid
+        fb = risk.explain_holder_text(row)
+        with st.spinner("Writing the explanation..."):
+            st.session_state[key] = llm_explain(LLM, f"Explain to the officer why {r['name']} was flagged.", fb, fb)[0]
+    if key in st.session_state:
+        ui.note(st.session_state[key])
+    a, b = st.columns(2, gap="medium")
+    with a:
+        ui.section("Monthly money in / out")
+        st.plotly_chart(charts.monthly_flows(case, hid), width="stretch", config=PC)
+    with b:
+        ui.section("Cash deposits")
+        sc = charts.cash_deposits_scatter(case, hid)
+        if sc:
+            st.plotly_chart(sc, width="stretch", config=PC)
         else:
-            st.info("No outgoing transfers above the minimum.")
-    with tab3:
-        tx = case.transactions[case.transactions.holder_id == hid]
+            st.caption("No cash deposits.")
+
+
+def evidence_tab(hid):
+    f = A.findings[A.findings.holder_id == hid]
+    if f.empty:
+        st.caption("No red flags, so there is no evidence to show.")
+    for fr in f.itertuples(index=False):
+        n = len(fr.evidence)
+        with st.expander(f"{LABEL.get(fr.pattern, fr.pattern)} · {n} record{'s' if n != 1 else ''}"):
+            st.write(fr.summary)
+            if n:
+                evidence_tables(fr.evidence)
+    tx = case.transactions[case.transactions.holder_id == hid]
+    with st.expander(f"Show records · all {len(tx):,} transactions"):
         modes = sorted(tx["mode"].unique())
         pick = st.pills("Mode", modes, selection_mode="multi", default=modes, label_visibility="collapsed")
         st.dataframe(tx_view(tx[tx["mode"].isin(pick or modes)]), hide_index=True, width="stretch",
-                     column_config=TX_CONFIG, height=480)
+                     column_config=TX_CONFIG, height=420)
 
 
-EXAMPLES = [
-    "Which cases should I investigate first?",
-    "Show total cash deposits by month",
-    "Who received more than 10 times their declared income?",
-    "Which firms are passing fake GST input tax credit?",
-    "List firms that paid less than 1% of their GST in cash",
-    "Show the shell firm network",
-]
-TOOL_NAME = {"risk_overview": "Risk ranking", "holder_profile": "Holder profile", "fund_trace": "Money trail",
-             "network": "Link finder", "sql": "Database query", "gst": "GST analysis"}
-
-
-def render_response(resp):
-    st.markdown(f"<span class='kd-chip'>{TOOL_NAME.get(resp.tool, resp.tool)}</span>"
-                + ("<span class='kd-chip' style='background:#ECFDF5;color:#047857'>AI explanation</span>"
-                   if resp.used_llm else ""), unsafe_allow_html=True)
-    st.markdown(resp.text)
-    if resp.fig is not None:
-        st.plotly_chart(resp.fig, width="stretch", config=PC)
-    if resp.html:
-        embed_html(resp.html, 560)
-    if resp.df is not None and len(resp.df):
-        if "txn_id" in resp.df.columns:
-            d, cfg = tx_view(resp.df), TX_CONFIG
-        else:
-            d = resp.df
-            cfg = {c: st.column_config.NumberColumn(c.replace("_", " "), format="localized")
-                   for c in d.columns if pd.api.types.is_numeric_dtype(d[c]) and not c.endswith("_id")}
-        st.dataframe(d, hide_index=True, width="stretch", height=min(380, 40 + 35 * len(d)), column_config=cfg)
-    if resp.steps or resp.sql:
-        with st.expander("How I got this answer"):
-            for stp in resp.steps:
-                st.markdown(f"- {stp}")
-            if resp.sql:
-                st.code(resp.sql, language="sql")
-            st.caption("Numbers come from code run on the data, never from the AI's memory.")
-
-
-def page_chat():
-    ui.header("Ask Kar Drishti", "Ask in plain English. The agent picks a tool, runs it on the case data and explains "
-                                 "the result.")
-    if LLM is None:
-        st.info(("This online demo has no AI model (the free host is too small to run one). " if config.PUBLIC_DEMO
-                 else "The local AI model is not connected. ")
-                + "Questions about risk ranking, a named person or firm, money trails, links and GST still work; "
-                  "free-form data questions need the local model on the officer's computer.", icon=":material/info:")
-    top = A.risk.iloc[0]
-    ex = (EXAMPLES[:4] if LLM else ["Which cases should I investigate first?",
-                                     "Which firms are passing fake GST input tax credit?",
-                                     "Show the shell firm network"]) + [f"Why is {top['name']} flagged?"]
-    if A.chains:
-        ex.append(f"Where did the money from {case.holder_name(A.chains[0]['start_holder'])} go?")
-    clicked = st.pills("Try", ex, selection_mode="single", key=f"pill-{len(st.session_state['chat'])}",
-                       label_visibility="collapsed")
-    for item in st.session_state["chat"]:
-        with st.chat_message("user", avatar=":material/person:"):
-            st.write(item.question)
-        with st.chat_message("assistant", avatar=BOT):
-            render_response(item)
-    q = st.chat_input("Ask about this case, e.g. Which accounts received money from both Kuber Traders and Vardhan "
-                      "Enterprises?") or clicked
-    if q:
-        with st.chat_message("user", avatar=":material/person:"):
-            st.write(q)
-        with st.chat_message("assistant", avatar=BOT):
-            with st.spinner("Thinking — the local model can take 20–40 seconds..."):
-                resp = AGENT.ask(q)
-            render_response(resp)
-        st.session_state["chat"].append(resp)
-        st.rerun()
-
-
-def page_links():
-    ui.header("Link finder", "People and firms connected by shared phones, addresses, directorships and money.")
-    cl = A.clusters
-    sus = [c for c in cl if c["suspicious"]]
-    ui.kpis([("Linked groups", len(cl), "3 or more people or firms"),
-             ("Suspicious groups", len(sus), "possible shell networks", "red"),
-             ("Money inside them", inr_short(sum(c["internal_flow"] for c in sus)), "transfers within the groups")])
-    mode = st.segmented_control("Show", ["Linked group", "Person or firm"], default="Linked group",
-                                label_visibility="collapsed")
-    if mode == "Person or firm":
-        c1, c2 = st.columns([3, 1])
-        members = [c1.selectbox("Person or firm", A.risk.holder_id.tolist(), format_func=holder_label)]
-        hops = c2.slider("Degrees", 1, 3, 2)
-    elif cl:
-        g = st.selectbox("Group", [c["cluster_id"] for c in cl],
-                         format_func=lambda x: next(f"{c['cluster_id']} · {len(c['members'])} entities"
-                                                    + ("  ·  suspicious" if c["suspicious"] else "")
-                                                    for c in cl if c["cluster_id"] == x))
-        members, hops = next(c for c in cl if c["cluster_id"] == g)["members"], 1
+def money_trail_tab(hid, r):
+    c1, c2 = st.columns(2)
+    min_amt = c1.select_slider("Minimum transfer", [50_000, 100_000, 200_000, 500_000, 1_000_000], 100_000,
+                               format_func=inr_short)
+    depth = c2.slider("Hops to follow", 1, 4, 3)
+    edges = money_trail.trace_funds(case, hid, depth=depth, min_amount=min_amt)
+    fig = charts.sankey(edges)
+    if fig:
+        back = edges[edges.target.str.split("|").str[1] == r["name"]]
+        if len(back):
+            st.warning(f"{inr(back.amount.sum())} came back to {r['name']} through other entities — "
+                       "possible round-tripping.", icon=":material/sync_problem:")
+        st.plotly_chart(fig, width="stretch", config=PC)
+        st.caption("Teal = inside this case · red = left the case (outside party) · red links = money returning "
+                   "to the start.")
     else:
-        st.info("No linked groups found.")
-        return
+        st.info("No outgoing transfers above the minimum.")
+
+
+def report_tab(hid):
+    st.write("A printable DRAFT report for this case, with findings, evidence and your signature block.")
+    notes = st.text_area("Your notes (optional)", height=90, key=f"notes-{hid}")
+    if st.button("Make draft report", icon=":material/description:", key=f"rep-{hid}"):
+        st.session_state[f"report-{hid}"] = report.build_report(case, A, [hid], notes,
+                                                                signature=prof.signature_block(PROFILE))
+        audit.log("approval", what="draft report made", holder=hid, officer=PROFILE.name)
+    html_doc = st.session_state.get(f"report-{hid}")
+    if html_doc:
+        st.download_button("Download draft report", html_doc, file_name=f"DRAFT_report_{hid}.html",
+                           mime="text/html", icon=":material/download:")
+        embed_html(html_doc, 700)
+
+
+def links_tab(hid):
+    """People and firms connected to this holder by shared phone / address / director and by money."""
+    group = next((c for c in A.clusters if hid in c["members"]), None)
+    if group:
+        txt = (f"Part of linked group {group['cluster_id']}: {len(group['members'])} entities "
+               f"({len(group['firms'])} firms), sharing "
+               + ", ".join(f"{v} {k}" for k, v in group["shared_links"].items())
+               + f". Money moved inside the group: {inr(group['internal_flow'])}.")
+        (st.warning if group["suspicious"] else st.info)(txt, icon=":material/hub:")
+    c1, c2 = st.columns([3, 1])
+    view = c1.segmented_control("Show", ["Direct connections", "Whole linked group"] if group else
+                                ["Direct connections"], default="Direct connections", key=f"lv-{hid}",
+                                label_visibility="collapsed")
+    if view == "Whole linked group" and group:
+        members, hops = group["members"], 1
+    else:
+        members, hops = [hid], c2.slider("Degrees", 1, 3, 1, key=f"hops-{hid}")
     G = link_finder.ego_network(case, members, hops=hops)
-    embed_html(link_finder.to_pyvis_html(case, G, set(members), RISK["risk_score"].to_dict(), height="560px"), 580)
-    st.caption("● person  ■ firm  ·  red = high risk, amber = medium  ·  dashed = shared phone / address / director  "
-               "·  arrows = money (thicker = more). Drag nodes to rearrange, hover for details.")
-    if cl:
-        with st.expander("All linked groups"):
+    if G.number_of_edges() == 0:
+        st.caption("No shared phone, address, director or large transfers with other holders.")
+    else:
+        embed_html(link_finder.to_pyvis_html(case, G, set(members), RISK["risk_score"].to_dict(), height="520px"), 540)
+        st.caption("● person  ■ firm  ·  red = high risk, amber = medium  ·  dashed = shared phone / address / "
+                   "director  ·  arrows = money (thicker = more). Drag to rearrange, hover for details.")
+    if A.clusters:
+        with st.expander(f"All linked groups in the case ({len(A.clusters)})"):
             st.dataframe(pd.DataFrame([{
                 "group": c["cluster_id"], "entities": len(c["members"]), "firms": len(c["firms"]),
                 "suspicious": "Yes" if c["suspicious"] else "", "money inside": inr_short(c["internal_flow"]),
                 "shared links": ", ".join(f"{v} {k}" for k, v in c["shared_links"].items()),
                 "members": ", ".join(case.holder_name(m) for m in c["members"][:6]) + (" …" if len(c["members"]) > 6 else "")}
-                for c in cl]), hide_index=True, width="stretch")
+                for c in A.clusters]), hide_index=True, width="stretch")
 
 
-def page_gst():
-    ui.header("GST network", "Circular trading, credit pass-through firms, missing e-way bills and risky ITC.")
-    if not gst.has_gst(case):
-        st.info("This case has no GST invoice data. Add gst_invoices.csv and gst_returns.csv to the case folder.")
-        return
+def gst_tab(hid):
+    """GST add-on: this firm's invoices, loops it is part of, and monthly returns."""
+    loops = [c for c in (A.gst_cycles or []) if hid in c["firms"]]
+    for cy in loops:
+        route = " → ".join(case.holder_name(x) for x in cy["route"])
+        ui.finding_card("Circular invoicing loop: " + route,
+                        f"{cy['invoices']} invoices · {inr(cy['total_value'])} went round the loop · ITC generated "
+                        f"{inr(cy['itc_generated'])} · {cy['no_eway_share']:.0%} without e-way bill", 0.9,
+                        f"{len(cy['firms'])} firms")
     inv = case.gst_invoices
-    f = A.findings[A.findings.pattern.str.startswith("gst")]
-    risky_sellers = set(f[f.pattern.isin(["gst_circular", "gst_itc_passthrough"])].holder_id)
-    ui.kpis([("B2B invoices", f"{len(inv):,}", f"{inr_short(inv.taxable_value.sum())} taxable value"),
-             ("ITC on invoices", inr_short(inv.gst_amount.sum()), "credit available to buyers"),
-             ("ITC from flagged sellers", inr_short(inv[inv.seller_firm_id.isin(risky_sellers)].gst_amount.sum()),
-              "likely fake credit", "red"),
-             ("Circular loops", len(A.gst_cycles or []), "invoice rings", "red")])
-    if A.gst_cycles:
-        ui.section("Circular invoicing loops")
-        for cy in A.gst_cycles:
-            route = " → ".join(case.holder_name(x) for x in cy["route"])
-            ui.finding_card(route, f"{cy['invoices']} invoices · {inr(cy['total_value'])} went round the loop · "
-                                   f"ITC generated {inr(cy['itc_generated'])} · {cy['no_eway_share']:.0%} without "
-                                   f"e-way bill", 0.9, f"{len(cy['firms'])} firms")
-    t1, t2, t3 = st.tabs(["Invoice network", "Firms with red flags", "Monthly returns"])
-    with t1:
-        firms_all = sorted(set(inv.seller_firm_id) | set(inv.buyer_firm_id), key=lambda x: -RISK.loc[x, "risk_score"])
-        opt = st.selectbox("Show", ["Flagged firms and their trading partners"] + firms_all,
-                           format_func=lambda x: x if x.startswith("Flagged") else holder_label(x),
-                           label_visibility="collapsed")
-        focus = sorted(set(f.holder_id)) if opt.startswith("Flagged") else [opt]
-        embed_html(gst.gst_network_html(case, focus, RISK["risk_score"].to_dict(), height="540px"), 560)
-        st.caption("■ firm (red = high risk) · arrow = invoices seller → buyer, thicker = more value · "
-                   "red arrow = most invoices have no e-way bill.")
-    with t2:
-        if len(f):
-            t = f.assign(name=f.holder_id.map(case.holder_name), red_flag=f.pattern.map(lambda p: LABEL.get(p, p)))
-            st.dataframe(t[["holder_id", "name", "red_flag", "summary"]], hide_index=True, width="stretch",
-                         column_config={"summary": st.column_config.TextColumn("details", width="large")})
-        else:
-            st.success("No GST red flags.")
-    with t3:
-        if case.gst_returns is not None and len(case.gst_returns):
-            fid = st.selectbox("Firm", firms_all, format_func=holder_label, key="gst_firm")
-            rr = case.gst_returns[case.gst_returns.firm_id == fid].sort_values("period")
+    sold, bought = inv[inv.seller_firm_id == hid], inv[inv.buyer_firm_id == hid]
+    ui.kpis([("Sales invoices", f"{len(sold):,}", inr_short(sold.taxable_value.sum()) + " taxable"),
+             ("Purchase invoices", f"{len(bought):,}", inr_short(bought.taxable_value.sum()) + " taxable"),
+             ("ITC on purchases", inr_short(bought.gst_amount.sum()), "credit claimed from suppliers"),
+             ("No e-way bill", f"{sold.eway_bill_no.isna().mean():.0%}" if len(sold) else "–", "of sales invoices")])
+    a, b = st.columns(2, gap="medium")
+    with a:
+        ui.section("Who it trades with")
+        embed_html(gst.gst_network_html(case, [hid], RISK["risk_score"].to_dict(), height="420px"), 440)
+        st.caption("Arrow = invoices seller → buyer, thicker = more value · red arrow = mostly no e-way bill.")
+    with b:
+        ui.section("Monthly GST returns")
+        rr = case.gst_returns[case.gst_returns.firm_id == hid].sort_values("period") \
+            if case.gst_returns is not None else pd.DataFrame()
+        if len(rr):
             st.plotly_chart(charts.gst_monthly(rr), width="stretch", config=PC)
             tot = rr[["output_tax", "itc_claimed", "tax_paid_cash"]].sum()
             st.caption(f"Year: output tax {inr(tot.output_tax)} · ITC {inr(tot.itc_claimed)} · paid in cash "
                        f"{inr(tot.tax_paid_cash)} ({tot.tax_paid_cash / max(tot.output_tax, 1):.1%} of liability)")
+        else:
+            st.caption("No GST returns for this firm.")
 
 
-def page_report():
-    ui.header("Case report", "A printable summary with findings and evidence. Open the downloaded file and print to PDF.")
-    flagged = A.risk[A.risk.risk_level != "LOW"].holder_id.tolist()
-    sel = st.multiselect("Holders to include", A.risk.holder_id.tolist(), default=flagged[:15], format_func=holder_label)
-    notes = st.text_area("Officer's notes (optional)", height=90)
-    use_ai = st.toggle("Add an AI-written summary", value=LLM is not None, disabled=LLM is None)
-    if st.button("Generate report", type="primary", icon=":material/description:"):
-        summary = ""
-        if use_ai and LLM:
-            facts = "\n".join(f"{x.name} ({x.holder_id}) score {x.risk_score:.0f}: " + " | ".join(x.reasons)
-                              for x in A.risk[A.risk.holder_id.isin(sel)].head(10).itertuples())
-            with st.spinner("Local model is writing the summary..."):
-                summary = llm_explain(LLM, "Write a short executive summary of this case for a senior officer.",
-                                      facts, "")[0]
-        st.session_state["report_html"] = report.build_report(case, A, sel or None, notes, summary)
-    if "report_html" in st.session_state:
-        st.download_button("Download report", st.session_state["report_html"], file_name="kar_drishti_case_report.html",
-                           mime="text/html", icon=":material/download:")
-        embed_html(st.session_state["report_html"], 760)
+def how_it_works():
+    """Short method note plus the accuracy check on the synthetic demo case."""
+    ui.section("How it works")
+    w = config.RISK_WEIGHTS
+    checks = [k for k in w if A.gst_on or k not in risk.GST_PATTERNS]
+    st.markdown(
+        "1. **Load** bank transactions and income-tax returns (demo data, uploaded statements or a case folder).\n"
+        f"2. **Check** every person and firm against {len(checks)} red-flag rules: cash structuring, round-tripping, "
+        "pass-through accounts, income mismatch, non-filers, large round-figure cash and linked shell firms"
+        + (", plus 4 GST signals for income-tax risk (add-on on)." if A.gst_on else ". GST checks are an optional add-on (Settings > Data).") + "\n"
+        "3. **Score**: each red flag adds up to its maximum points, scaled by how strong the evidence is; the total is "
+        f"capped at 100. High ≥ {config.RISK_HIGH}, Medium ≥ {config.RISK_MEDIUM}. Any red flag means at least Medium.\n"
+        "4. **Ask**: the agents pick a tool, run it on the data and explain the result. It never makes up "
+        "numbers, and everything runs on this computer.")
+    with st.expander("Maximum points per red flag"):
+        st.dataframe(pd.DataFrame([{"red flag": LABEL.get(k, k), "max points": w[k]} for k in checks]),
+                     hide_index=True, width="stretch")
+    st.caption("See **Self-test on demo data** above for how the rules do on the planted demo cases.")
 
 
-def page_accuracy():
-    ui.header("Accuracy check", "How many of the fraud cases planted in the synthetic demo data were found.")
-    if not case.ground_truth:
-        st.info("Accuracy can only be measured on the synthetic demo case, where the fraud cases are known.")
-        return
-    e = risk.evaluate(A, case.ground_truth)
-    o = e["overall"]
-    ui.kpis([("Planted suspicious entities", o["planted_entities"], "known fraud cases"),
-             ("Flagged for review", o["flagged_medium_or_high"], "by Kar Drishti"),
-             ("Recall", f"{o['recall']:.0%}", "planted cases caught", "teal"),
-             ("Precision", f"{o['precision']:.0%}" if o["precision"] is not None else "–", "flags that were right", "teal")])
-    rows = [{"pattern": LABEL.get(k, k), "planted": v["planted"], "detected": v["detected"],
-             "recall": (v["recall"] or 0) * 100, "missed": ", ".join(v["missed"])} for k, v in e["per_pattern"].items()]
-    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch",
-                 column_config={"recall": st.column_config.ProgressColumn("recall", min_value=0, max_value=100,
-                                                                         format="%.0f%%")})
-    st.caption("Planted patterns in synthetic data are cleaner than real cases; expect more borderline cases on real "
-               "data. Thresholds can be tuned in config.py.")
-    with st.expander("What was planted"):
-        for n in case.ground_truth.get("notes", []):
-            st.markdown(f"- {n}")
-
-
-def page_load():
-    ui.header("Load data", "Synthetic demo case only in the online demo." if config.PUBLIC_DEMO else
-              "Use the synthetic demo case, upload bank statements, or point to a case folder.")
+def data_settings():
+    """Settings > Data: files added with "Add data", the audit log, the demo case, bank statements as a new
+    case, a case folder and the GST add-on."""
+    ui.section("Files added")
+    saved = uploads.read_manifest()
+    if not saved:
+        st.caption("No files added yet. Use **Add data** in the sidebar.")
+    loaded = {t["file"]: t for t in st.session_state.get("up_tables", [])}
+    for e in saved:
+        c1, c2 = st.columns([5, 1])
+        t = loaded.get(e["name"])
+        c1.markdown(f"**{ui.esc(e['name'])}** · {ui.esc(e['kind'])}"
+                    + (f" · table `{t['table']}` · {t['rows']:,} rows" if t else "")
+                    + f"  \nSHA-256 `{e['sha256']}`")
+        if c2.button("Remove", key=f"rm-{e['sha256']}", icon=":material/delete:"):
+            uploads.remove_upload(e["sha256"])
+            st.session_state["con_key"] = None
+            st.rerun()
+    with st.expander("Audit log · last 100 events"):
+        ev = audit.read(last=100)
+        if ev:
+            st.dataframe(pd.DataFrame(ev[::-1]).astype(str), hide_index=True, width="stretch", height=320)
+        else:
+            st.caption("Nothing logged yet.")
+    ui.section("Case data")
+    st.caption("Synthetic demo case only in the online demo." if config.PUBLIC_DEMO else
+               "Use the synthetic demo case, upload bank statements, or point to a case folder.")
+    with st.container(border=True):
+        on = st.toggle("GST checks (add-on)", value=GST_ON,
+                       help="Circular invoicing, ITC set-off without cash tax, missing e-way bills and ITC from "
+                            "flagged suppliers. Needs gst_invoices.csv and gst_returns.csv.")
+        st.caption("GST is handled by the GST department (CBIC), so these checks are optional. Leave off to focus "
+                   "on income-tax investigation." + ("" if gst.has_gst(case) else " This case has no GST data."))
+        if on != GST_ON:
+            st.session_state["gst_on"] = on
+            if "uploaded_case" in st.session_state:
+                up = st.session_state["uploaded_case"][0]
+                st.session_state["uploaded_case"] = (up, risk.analyze(up, include_gst=on))
+            st.rerun()
     if config.PUBLIC_DEMO:
         st.info("This is the public online demo, so uploading real bank statements or case folders is disabled. "
                 "Use the synthetic demo case below; the offline version on an officer's computer supports uploads.",
@@ -558,13 +782,13 @@ def page_load():
                 filed = c[3].checkbox("ITR filed", value=True, key=f"f{i}")
             items.append({"file_name": fl.name, "data": fl.getvalue(), "holder_name": name, "holder_type": htype,
                           "declared_income": inc, "gross_receipts": inc if htype == "FIRM" else 0, "filed": filed})
-        if items and st.button("Analyse these statements", type="primary"):
+        if items and st.button("Check these statements"):
             from kar_drishti.statements import build_case_from_statements
             try:
-                with st.spinner("Reading statements and analysing..."):
+                with st.spinner("Reading the statements..."):
                     up = build_case_from_statements(items, "Uploaded statements")
-                    st.session_state["uploaded_case"] = (up, risk.analyze(up))
-                st.switch_page(PAGES["dashboard"])
+                    st.session_state["uploaded_case"] = (up, risk.analyze(up, include_gst=GST_ON))
+                st.switch_page(PAGES["cases"])
             except Exception as ex:
                 st.error(f"Could not read the statements: {ex}")
     with t3:
@@ -580,18 +804,169 @@ def page_load():
                 st.error("transactions.csv not found in that folder.")
 
 
+
+
+# ====================================================================== Revenue and Library
+def page_revenue():
+    if REV is None:
+        ui.header("Revenue", "Target, collections, gap and year-end projection, with a ranked recovery list.")
+        st.info("No targets and collections are loaded. Add them with **Add data** in the sidebar.",
+                icon=":material/payments:")
+        return
+    ui.header("Revenue", f"FY {REV.fy} · collections as on {pd.Timestamp(REV.as_on):%d %b %Y} · {REV.label}")
+    for n in REV.notes:
+        st.caption(n)
+    where, c = {}, st.columns(3)
+    t = REV.targets
+    for i, lvl in enumerate(LEVELS):
+        opts = sorted(t[(t[list(where)] == pd.Series(where)).all(axis=1)][lvl].unique()) if where else sorted(t[lvl].unique())
+        pick = c[i].selectbox(lvl.title(), ["All"] + list(opts), key=f"rev-{lvl}")
+        if pick == "All":
+            break
+        where[lvl] = pick
+    s = REV.summary(where)
+    behind = s["projected"] < s["target"]
+    ui.kpis([("Target", inr_short(s["target"]), f"FY {s['fy']}"),
+             ("Collected", inr_short(s["collected"]), f"{s['achieved_pct']}% of target"),
+             ("Gap", inr_short(s["gap"]), f"needs {inr_short(s['monthly_pace_needed'])} a month to 31 March",
+              "amber" if s["gap"] > 0 else ""),
+             ("Projected", inr_short(s["projected"]),
+              f"{inr_short(abs(s['projected'] - s['target']))} {'short of' if behind else 'above'} target",
+              "red" if behind else "teal")])
+    st.plotly_chart(RevenueAgent(REV).chart(where), width="stretch", config=PC)
+    problems = REV.consistency()
+    if problems:
+        st.error("Totals do not add up: " + "; ".join(problems), icon=":material/error:")
+    else:
+        st.caption("✓ Totals add up at every level: range > charge > region > all, and months > year. "
+                   "Projection = last year's monthly pattern scaled by this year's run-rate "
+                   f"(plain run-rate: {inr_short(s['run_rate_projected'])}).")
+    nxt = next((l for l in LEVELS if l not in where), None)
+    with st.expander(f"Show records · by {nxt or 'range'} and by month"):
+        g = REV.rollup(nxt or "range", where)
+        st.dataframe(g.drop(columns=["ly_same_period", "ly_full_year", "run_rate_projected", "projected_vs_target"]),
+                     hide_index=True, width="stretch", column_config={
+                         c: st.column_config.NumberColumn(c.replace("_", " "), format="localized")
+                         for c in ["target", "collected", "gap", "projected", "monthly_pace_needed"]})
+        st.dataframe(REV.monthly(where), hide_index=True, width="stretch")
+    ui.section("Recovery list")
+    st.caption("Largest undisputed demands with no stay first, then the rest by size. The officer decides the action.")
+    rl = REV.recovery_list(where)
+    if rl.empty:
+        st.caption("No outstanding demands.")
+    else:
+        top = rl.head(10).assign(outstanding=rl.head(10).outstanding.map(inr_short))
+        st.dataframe(top[["rank", "taxpayer_name", "range", "outstanding", "reason"]], hide_index=True,
+                     width="stretch", column_config={"rank": st.column_config.NumberColumn("#", width="small"),
+                                                     "taxpayer_name": "Taxpayer", "reason": st.column_config.TextColumn(
+                                                         "Why this rank", width="large")})
+        with st.expander(f"Show records · all {len(rl)} outstanding demands · ageing"):
+            st.dataframe(rl, hide_index=True, width="stretch")
+            ag = REV.ageing(where)
+            st.dataframe(ag.assign(outstanding=ag.outstanding.map(inr_short),
+                                   disputed_or_stayed=ag.disputed_or_stayed.map(inr_short)),
+                         hide_index=True, width="stretch")
+
+
+def page_library():
+    ui.header("Library", "Circulars, office orders and Acts. Answers quote the exact sentences, with document "
+                         "number and date.")
+    st.caption(LIB.embed_status + " Add your own documents with **Add data**.")
+    rows = [{"document": d.title, "number": d.number, "date": d.date, "type": d.kind, "passages": len(d.passages),
+             "source": "fictitious demo" if d.source == "demo" else "added"} for d in LIB.docs.values()]
+    if rows:
+        st.dataframe(pd.DataFrame(rows).sort_values("date"), hide_index=True, width="stretch")
+    else:
+        st.info("No documents loaded yet.", icon=":material/menu_book:")
+    smap = LIB.section_map
+    st.caption("Section mapping 1961 ↔ 2025 Act: " + (f"{len(smap)} rows loaded." if smap is not None and len(smap)
+               else "no rows loaded (template only). Pragya never guesses a section."))
+    ui.section("Test search")
+    q = st.text_input("Search the library", placeholder="e.g. How many casual leave days can be carried forward?",
+                      label_visibility="collapsed")
+    if q:
+        res = LawAgent(LIB).run(q)
+        st.markdown(res.template.split("\n")[0] if res.extra.get("status") in ("conflict", "same") else res.template)
+        show_quotes(res)
+        hits = LIB.search(q, 6)
+        with st.expander(f"Show matching passages · {len(hits)}"):
+            for score, p in hits:
+                d = LIB.docs[p.doc_id]
+                st.markdown(f"`{score:.2f}` · No. {d.number} · {ui.esc(p.text)}")
+
+
+# ====================================================================== Settings
+def page_settings():
+    ui.header("Settings", "Your profile, the local AI model and the data in use. Everything stays on this computer.")
+    t_prof, t_model, t_data = st.tabs(["Officer profile", "Model", "Data"])
+    with t_prof:
+        profile_settings()
+    with t_model:
+        model_settings()
+    with t_data:
+        data_settings()
+
+
+def profile_settings():
+    st.caption("Your rank and posting decide the 4 starter questions on the Ask screen and the signature block on "
+               "every draft. Saved only on this computer.")
+    ranks, posts = list(prof.RANKS), prof.POSTINGS
+    with st.form("profile_form"):
+        name = st.text_input("Name", PROFILE.name, placeholder="Your name as it should appear on drafts")
+        c1, c2 = st.columns(2)
+        rank = c1.selectbox("Rank", ranks, index=ranks.index(PROFILE.rank), format_func=lambda r: f"{r} · {prof.RANKS[r]}")
+        posting = c2.selectbox("Posting", posts, index=posts.index(PROFILE.posting))
+        if st.form_submit_button("Save profile", type="primary", icon=":material/save:"):
+            new = prof.Profile(name=name.strip(), rank=rank, posting=posting)
+            if not config.PUBLIC_DEMO:          # online demo: keep the profile for this visitor's session only
+                prof.save_profile(new)
+            audit.log("approval", what="officer profile saved", rank=rank, posting=posting)
+            st.session_state["officer_profile"] = new
+            st.rerun()
+    c1, c2 = st.columns(2)
+    with c1:
+        ui.section("Your starter questions")
+        top = A.risk.iloc[0]["name"] if len(A.risk) else ""
+        trail = case.holder_name(A.chains[0]["start_holder"]) if A.chains else ""
+        for q in prof.starter_questions(PROFILE, top=top, trail=trail):
+            st.markdown(f"- {q}")
+    with c2:
+        ui.section("Signature block on drafts")
+        st.code(prof.signature_block(PROFILE), language=None)
+
+
+def model_settings():
+    cfg = st.session_state["llm_cfg"]
+    free, total = memory_gb()
+    ui.kpis([("Model in use", cfg["model"] or "none", "connected" if LLM else "not connected", "" if LLM else "amber"),
+             ("Free memory", f"{free:.1f} GB" if free is not None else "–",
+              f"of {total:.1f} GB" if total is not None else "could not read"),
+             ("Server", "Ollama" if cfg["provider"] == "ollama" else "OpenAI-compatible", cfg["url"])])
+    st.caption(MODEL_MSG)
+    prov = st.selectbox("Runtime", ["ollama", "openai"], index=0 if cfg["provider"] == "ollama" else 1,
+                        format_func=lambda p: "Ollama" if p == "ollama" else "LM Studio / llama.cpp (OpenAI-compatible)")
+    url = st.text_input("Address", cfg["url"])
+    mdl = st.selectbox("Model", MODELS, index=MODELS.index(cfg["model"]) if cfg["model"] in MODELS else 0) \
+        if MODELS else None
+    if (prov, url) != (cfg["provider"], cfg["url"]) or (mdl and mdl != cfg["model"]):
+        cfg.update(provider=prov, url=url, wanted=mdl)
+        st.rerun()
+    st.caption("Default qwen3.5:4b (thinking off), fallback qwen2.5:3b; qwen3.5:9b only with 8 GB or more free. "
+               "Only addresses on this computer are allowed (a Department server needs the admin setting), and no "
+               "model is ever downloaded automatically. "
+               "Installed models: " + (", ".join(MODELS) if MODELS else "none found") + ".")
+
+
+
+
+# ====================================================================== navigation
 PAGES = {
-    "dashboard": st.Page(page_dashboard, title="Overview", icon=":material/space_dashboard:", url_path="overview",
-                         default=True),
-    "case": st.Page(page_case, title="Case analysis", icon=":material/person_search:", url_path="case"),
-    "chat": st.Page(page_chat, title="Ask Kar Drishti", icon=":material/forum:", url_path="ask"),
-    "links": st.Page(page_links, title="Link finder", icon=":material/hub:", url_path="links"),
-    "gst": st.Page(page_gst, title="GST network", icon=":material/receipt_long:", url_path="gst"),
-    "report": st.Page(page_report, title="Case report", icon=":material/description:", url_path="report"),
-    "accuracy": st.Page(page_accuracy, title="Accuracy check", icon=":material/verified:", url_path="accuracy"),
-    "load": st.Page(page_load, title="Load data", icon=":material/upload_file:", url_path="data"),
+    "ask": st.Page(page_ask, title="Ask", icon=":material/forum:", url_path="ask", default=True),
+    "cases": st.Page(page_cases, title="Cases", icon=":material/person_search:", url_path="cases"),
+    "revenue": st.Page(page_revenue, title="Revenue", icon=":material/payments:", url_path="revenue"),
+    "library": st.Page(page_library, title="Library", icon=":material/menu_book:", url_path="library"),
+    "settings": st.Page(page_settings, title="Settings", icon=":material/settings:", url_path="settings"),
 }
-nav = st.navigation({"Investigate": [PAGES["dashboard"], PAGES["case"], PAGES["chat"], PAGES["links"], PAGES["gst"]],
-                     "Output": [PAGES["report"], PAGES["accuracy"]],
-                     "Data": [PAGES["load"]]})
+nav = st.navigation(list(PAGES.values()), position="hidden")
+sidebar()
 nav.run()

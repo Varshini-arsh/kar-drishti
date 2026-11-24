@@ -86,6 +86,7 @@ class SQLAgent:
     def __init__(self, llm: LocalLLM, con, case: Case | None = None):
         self.llm, self.con, self.case = llm, con, case
         self.schema = schema_text(con)
+        self.gst = "TABLE gst_" in self.schema
 
     def known_ids(self, question: str) -> str:
         if self.case is None:
@@ -98,8 +99,11 @@ class SQLAgent:
 
     def messages(self, question: str) -> list[dict]:
         from .sql_examples import pick_examples
-        msgs = [{"role": "system", "content": SQL_SYSTEM.format(schema=self.schema)}]
-        for q, s in reversed(pick_examples(question, k=4)):      # most similar example last (closest to question)
+        system = SQL_SYSTEM.format(schema=self.schema)
+        if not self.gst:
+            system += "\nThe GST tables are NOT loaded (GST add-on is off). Never use gst_invoices or gst_returns."
+        msgs = [{"role": "system", "content": system}]
+        for q, s in reversed(pick_examples(question, k=4, gst=self.gst)):      # most similar example last (closest to question)
             msgs += [{"role": "user", "content": q}, {"role": "assistant", "content": f"```sql\n{s}\n```"}]
         ids = self.known_ids(question)
         msgs.append({"role": "user", "content": question + (f"\n{ids}" if ids else "")})
@@ -261,7 +265,7 @@ class KarDrishti:
     def plan(self, q: str, holders: list[str], steps: list) -> str:
         if self.llm:
             try:
-                tools = "\n".join(f"- {k}: {v}" for k, v in TOOLS.items())
+                tools = "\n".join(f"- {k}: {v}" for k, v in TOOLS.items() if k != "gst" or self.a.gst_on)
                 extra = (f"\nHolders mentioned in the question: "
                          f"{', '.join(f'{h} ({self.case.holder_name(h)})' for h in holders)}" if holders
                          else "\nNo specific holder is mentioned.")
@@ -286,6 +290,10 @@ class KarDrishti:
         if holders:
             steps.append("Identified: " + ", ".join(f"{self.case.holder_name(h)} ({h})" for h in holders))
         tool = self.plan(q, holders, steps)
+        if tool == "gst" and not self.a.gst_on:
+            return AgentResponse(q, "gst", "The GST checks are an optional add-on and are switched off. Turn on "
+                                           "**GST checks** on the Load data page to analyse invoices, ITC and "
+                                           "e-way bills.", steps=steps)
         fn = {"gst": self.tool_gst, "risk_overview": self.tool_risk_overview, "holder_profile": self.tool_holder_profile,
               "fund_trace": self.tool_fund_trace, "network": self.tool_network, "sql": self.tool_sql}[tool]
         resp = fn(q, holders, steps)
@@ -325,7 +333,8 @@ class KarDrishti:
         full = row.copy()
         full["holder_id"] = hid
         fallback = risk.explain_holder_text(full)
-        facts = fallback + f"\nAnomaly score: {row['anomaly']}"
+        facts = fallback + ("\nHint (not part of the score): the ML outlier model marks this holder's behaviour as "
+                            "unusual compared with others." if row.get("outlier") else "")
         text, used = llm_explain(self.llm, f"Explain to the officer why {row['name']} was flagged.", facts, fallback)
         return AgentResponse(q, "holder_profile", text, holders=[hid], df=ev,
                              fig=charts.monthly_flows(self.case, hid), used_llm=used)

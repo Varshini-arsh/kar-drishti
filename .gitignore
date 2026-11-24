@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 .venv/
+_update.tgz
+data/uploads/
+data/audit_log.jsonl
+data/officer_profile.json

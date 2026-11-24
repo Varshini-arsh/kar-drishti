@@ -8,6 +8,13 @@ Add new (question, SQL) pairs here whenever officers ask a new kind of question.
 """
 
 EXAMPLES = [
+    ("Show total cash deposits by month",
+     """SELECT strftime(t.txn_date, '%Y-%m') AS month, ROUND(SUM(t.amount)) AS total_cash_deposits,
+       COUNT(*) AS deposits
+FROM transactions t
+WHERE t.mode = 'CASH' AND t.direction = 'CR'
+GROUP BY month ORDER BY month"""),
+
     ("Top 5 people by total cash deposits",
      """SELECT h.holder_id, h.name, ROUND(SUM(t.amount)) AS total_cash_deposits, COUNT(*) AS deposits
 FROM transactions t JOIN holders h USING (holder_id)
@@ -121,11 +128,14 @@ def _words(text: str) -> set[str]:
     return out
 
 
-def pick_examples(question: str, k: int = 4) -> list[tuple[str, str]]:
-    """Return the k examples whose questions share the most words with `question`."""
+def pick_examples(question: str, k: int = 4, gst: bool = True) -> list[tuple[str, str]]:
+    """Return the k examples whose questions share the most words with `question`.
+    gst=False skips examples that use the GST tables (GST add-on switched off)."""
     qw = _words(question)
     scored = []
     for i, (q, s) in enumerate(EXAMPLES):
+        if not gst and "gst_" in s:
+            continue
         ew = _words(q.split("\n")[0])
         score = len(qw & ew) / (len(ew) ** 0.5 or 1)
         scored.append((score, -i, q, s))

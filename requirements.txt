@@ -1,4 +1,4 @@
-# Kar Drishti - tested with Python 3.10-3.13 on Windows/Linux
+# Pragya online demo (Streamlit Community Cloud) - synthetic data only, no AI model
 streamlit>=1.50
 pandas>=2.1
 numpy>=1.26
@@ -10,3 +10,4 @@ plotly>=5.20
 requests>=2.31
 openpyxl>=3.1
 faker>=24.0
+pypdf>=4.0

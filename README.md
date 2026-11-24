@@ -1,9 +1,6 @@
-# Kar Drishti — online demo (Streamlit Community Cloud)
+# Pragya · Insight for every tax desk (online demo)
 
-An AI case analyst for Income Tax and GST field officers: risk ranking, money-trail analysis,
-shell-firm link finding and GST fake-ITC detection.
-
-**All data in this demo is synthetic (fake).** Uploading real data is disabled.
-
-The free host is too small to run the local AI model, so free-form AI questions are switched off here.
-The full version runs offline on the officer's own computer with a local model (qwen2.5:3b via Ollama).
+Public demo of Pragya, an offline multi-agent assistant for Indian Income Tax officers.
+All data is synthetic and the circulars are fictitious. Uploads are disabled and no AI model runs here:
+answers come from Pragya's tools and templates, and every number is checked against the tool output.
+The full version runs entirely on the officer's own computer with a local model (Ollama).
