@@ -308,7 +308,7 @@ def sidebar():
 
 
 if config.PUBLIC_DEMO:
-    st.markdown("<div style='font-size:.8rem;color:#8A8580;margin:-1.2rem 0 1.2rem'>Online demo · synthetic data "
+    st.markdown("<div style='font-size:.8rem;color:#8A8580;margin:0 0 1rem'>Online demo · synthetic data "
                 "only, uploads off, no AI model. The real tool runs fully offline on the officer's computer.</div>",
                 unsafe_allow_html=True)
 
