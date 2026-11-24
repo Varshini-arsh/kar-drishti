@@ -1,0 +1,104 @@
+{
+  "seed": 42,
+  "notes": [
+    "structuring: repeated cash deposits of Rs 45,000-49,900 spread across 3 accounts",
+    "round_trip: money leaves a controller, passes 2-3 shell firms, returns within days",
+    "pass_through: many small credits forwarded out within 0-1 day (mule behaviour)",
+    "income_mismatch / non_filer: bank credits far above declared income or no return filed",
+    "round_cash: repeated cash withdrawals of exactly Rs 2.5L / 5L / 10L",
+    "gst_circular: shell firms invoice each other in a ring every month (mostly no e-way bills)",
+    "gst_risky_itc: 3 ordinary-looking firms claim ITC on paper invoices bought from shell firms",
+    "gst_itc_passthrough: shell firms pay almost no GST in cash; credit offsets all output tax"
+  ],
+  "planted": {
+    "structuring": [
+      "P0124",
+      "P0125",
+      "P0126",
+      "P0127",
+      "P0128"
+    ],
+    "round_trip": [
+      "P0121",
+      "F0029",
+      "F0030",
+      "P0122",
+      "F0031",
+      "F0033",
+      "F0034",
+      "P0123",
+      "F0035",
+      "F0036"
+    ],
+    "pass_through": [
+      "P0129",
+      "P0130",
+      "P0131",
+      "P0132"
+    ],
+    "income_mismatch": [
+      "P0129",
+      "P0130",
+      "P0131",
+      "P0132",
+      "P0133",
+      "P0134",
+      "P0135"
+    ],
+    "non_filer": [
+      "P0136",
+      "P0137",
+      "P0138"
+    ],
+    "round_cash": [
+      "P0139",
+      "P0140",
+      "P0141"
+    ],
+    "shell_cluster": [
+      "F0029",
+      "F0030",
+      "F0031",
+      "F0032",
+      "F0033",
+      "F0034",
+      "F0035",
+      "F0036"
+    ],
+    "gst_circular": [
+      "F0029",
+      "F0030",
+      "F0031",
+      "F0032",
+      "F0033",
+      "F0034",
+      "F0035",
+      "F0036"
+    ],
+    "gst_itc_passthrough": [
+      "F0029",
+      "F0030",
+      "F0031",
+      "F0032",
+      "F0033",
+      "F0034",
+      "F0035",
+      "F0036"
+    ],
+    "gst_no_eway": [
+      "F0029",
+      "F0030",
+      "F0031",
+      "F0032",
+      "F0033",
+      "F0034",
+      "F0035",
+      "F0036"
+    ],
+    "gst_risky_itc": [
+      "F0014",
+      "F0010",
+      "F0007"
+    ]
+  }
+}

@@ -1,0 +1,32 @@
+[browser]
+# keep everything offline: do not send usage statistics
+gatherUsageStats = false
+
+[client]
+# hide the "Deploy" button and developer menu
+toolbarMode = "minimal"
+
+[server]
+maxUploadSize = 200
+
+[theme]
+base = "light"
+primaryColor = "#0F766E"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F5F5F4"
+textColor = "#1C1917"
+borderColor = "#E7E5E4"
+dataframeBorderColor = "#E7E5E4"
+dataframeHeaderBackgroundColor = "#FAFAF9"
+showWidgetBorder = true
+baseRadius = "10px"
+buttonRadius = "8px"
+baseFontSize = 15
+headingFontWeights = [700, 650, 600]
+linkColor = "#0F766E"
+chartCategoricalColors = ["#0F766E", "#D97706", "#DC2626", "#78716C", "#14B8A6", "#A8A29E"]
+
+[theme.sidebar]
+backgroundColor = "#FAFAF9"
+secondaryBackgroundColor = "#F0FDFA"
+borderColor = "#E7E5E4"
