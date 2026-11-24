@@ -58,3 +58,7 @@ Plain-English notes, one line per change.
 - `--model qwen3.5:4b` runs the same questions with the real local model and prints average and slowest answer times.
 - Data questions that match a worked example skip the model call (faster and always the same answer).
 - README rewritten for Pragya.
+
+## Design update - white and minimal
+- Always white (dark mode removed at the officer's request); white sidebar with five links, Add data and one quiet status line.
+- Quieter headings, small uppercase section labels, thinner borders, charts without frames, fewer captions.

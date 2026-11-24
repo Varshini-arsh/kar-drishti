@@ -13,7 +13,7 @@ import branding
 
 TEAL, TEAL_SOFT = branding.ACCENT, "rgba(20,184,166,.14)"
 RED, AMBER, STONE = branding.RISK_COLOURS["HIGH"], branding.RISK_COLOURS["MEDIUM"], branding.RISK_COLOURS["LOW"]
-BORDER = "rgba(120,113,108,.28)"     # works on white and on dark backgrounds
+BORDER = "rgba(120,113,108,.16)"     # works on white and on dark backgrounds
 SOFT = "rgba(120,113,108,.08)"
 MUTED = "#8A8580"                    # mid grey, readable in both modes
 INK = "inherit"
@@ -23,22 +23,30 @@ LEVEL_BG = {"HIGH": "rgba(220,38,38,.12)", "MEDIUM": "rgba(217,119,6,.14)", "LOW
 
 CSS = f"""
 <style>
-section[data-testid="stSidebar"] {{ width: 240px !important; min-width: 240px !important; }}
-.block-container {{ max-width: 1100px; padding-top: 3.2rem; padding-bottom: 3rem; }}
+section[data-testid="stSidebar"] {{ width: 232px !important; min-width: 232px !important;
+  border-right: 1px solid {BORDER}; }}
+section[data-testid="stSidebar"] a[data-testid="stSidebarNavLink"], section[data-testid="stSidebar"] a {{ border-radius: 8px; }}
+section[data-testid="stSidebar"] hr {{ margin: .8rem 0; border-color: {BORDER}; }}
+div[data-testid="stExpander"] details {{ border: 1px solid {BORDER} !important; border-radius: 10px; }}
+div[data-testid="stExpander"] summary {{ font-size: .9rem; }}
+div[data-testid="stChatMessage"] {{ background: transparent; }}
+.kd-side {{ font-size: .78rem; color: {MUTED}; line-height: 1.5; margin: .2rem 0 .4rem; }}
+.block-container {{ max-width: 1040px; padding-top: 3.4rem; padding-bottom: 4rem; }}
 h1, h2, h3 {{ letter-spacing: -0.01em; }}
-div[data-testid="stPlotlyChart"] {{ border: 1px solid {BORDER}; border-radius: 12px; padding: 8px 10px 4px; background: transparent; }}
+div[data-testid="stPlotlyChart"] {{ padding: 4px 0; }}
 div[data-testid="stExpander"] details {{ border-radius: 10px; }}
 
-.kd-head {{ margin: 0 0 1.4rem; }}
-.kd-head h1 {{ font-size: 1.7rem; font-weight: 700; margin: 0; padding: 0; }}
-.kd-head p {{ color: {MUTED}; margin: .3rem 0 0; font-size: .95rem; }}
-.kd-section {{ font-size: 1.02rem; font-weight: 650; color: {INK}; margin: 1.6rem 0 .6rem; }}
+.kd-head {{ margin: 0 0 1.8rem; }}
+.kd-head h1 {{ font-size: 1.55rem; font-weight: 650; margin: 0; padding: 0; letter-spacing: -0.02em; }}
+.kd-head p {{ color: {MUTED}; margin: .35rem 0 0; font-size: .92rem; }}
+.kd-section {{ font-size: .78rem; font-weight: 600; color: {MUTED}; margin: 2rem 0 .7rem; text-transform: uppercase;
+  letter-spacing: .06em; }}
 
 .kd-kpis {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 0 0 .4rem; }}
 @media (max-width: 900px) {{ .kd-kpis {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }} }}
-.kd-kpi {{ border: 1px solid {BORDER}; border-radius: 12px; padding: 14px 16px; background: transparent; min-width: 0; }}
-.kd-kpi .l {{ font-size: .82rem; color: {MUTED}; font-weight: 500; }}
-.kd-kpi .v {{ font-size: 1.6rem; font-weight: 700; color: {INK}; margin-top: 2px; white-space: nowrap;
+.kd-kpi {{ border: 1px solid {BORDER}; border-radius: 12px; padding: 16px 18px; background: transparent; min-width: 0; }}
+.kd-kpi .l {{ font-size: .78rem; color: {MUTED}; font-weight: 500; }}
+.kd-kpi .v {{ font-size: 1.5rem; font-weight: 600; color: {INK}; margin-top: 4px; white-space: nowrap; letter-spacing: -0.01em;
              overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }}
 .kd-kpi .s {{ font-size: .8rem; color: {MUTED}; margin-top: 2px; }}
 .kd-kpi.red .v {{ color: {RED}; }} .kd-kpi.amber .v {{ color: {AMBER}; }} .kd-kpi.teal .v {{ color: {TEAL}; }}
@@ -48,11 +56,11 @@ div[data-testid="stExpander"] details {{ border-radius: 10px; }}
 .kd-chip {{ display: inline-block; padding: 2px 9px; margin: 0 6px 6px 0; border-radius: 999px; font-size: .76rem;
            background: {TEAL_SOFT}; color: {TEAL}; font-weight: 600; }}
 
-.kd-find {{ border: 1px solid {BORDER}; border-left: 4px solid {RED}; border-radius: 10px; padding: 12px 16px;
+.kd-find {{ border: 1px solid {BORDER}; border-left: 3px solid {RED}; border-radius: 10px; padding: 12px 16px;
            background: transparent; margin-bottom: 8px; }}
 .kd-find .t {{ font-weight: 650; color: {INK}; font-size: .97rem; }}
 .kd-find .d {{ color: inherit; opacity: .88; font-size: .92rem; margin-top: 4px; line-height: 1.5; }}
-.kd-note {{ background: {SOFT}; border: 1px solid {BORDER}; border-left: 4px solid {TEAL}; border-radius: 10px;
+.kd-note {{ background: transparent; border: 1px solid {BORDER}; border-left: 3px solid {TEAL}; border-radius: 10px;
            padding: 12px 16px; font-size: .93rem; color: inherit; line-height: 1.55; margin: 6px 0 14px; }}
 .kd-ai {{ font-size: .82rem; color: {MUTED}; padding: 9px 11px; border: 1px solid {BORDER}; border-radius: 10px;
          background: transparent; margin-top: .3rem; line-height: 1.4; }}
@@ -123,11 +131,11 @@ def note(text: str):
 
 
 def ai_status(ok: bool, model: str, msg: str):
+    """One quiet line in the sidebar: a dot and the model in use (details on hover)."""
     color = "#16A34A" if ok else AMBER
-    label = f"AI model: {model}" if ok else "AI model: offline"
-    st.markdown(f"<div class='kd-ai'><span class='kd-dot' style='background:{color}'></span>{esc(label)}"
-                f"<div style='margin-top:3px'>{esc('Running on this computer' if ok else msg)}</div></div>",
-                unsafe_allow_html=True)
+    label = model if ok else "AI model offline"
+    st.markdown(f"<div class='kd-side' title='{esc(msg)}'><span class='kd-dot' style='background:{color}'></span>"
+                f"{esc(label)}</div>", unsafe_allow_html=True)
 
 
 PLOTLY_CONFIG = {"displayModeBar": False, "responsive": True}

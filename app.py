@@ -296,23 +296,21 @@ def sidebar():
         st.page_link(PAGES["cases"], label="Cases", icon=":material/person_search:")
         st.page_link(PAGES["revenue"], label="Revenue", icon=":material/payments:")
         st.page_link(PAGES["library"], label="Library", icon=":material/menu_book:")
-        if not config.PUBLIC_DEMO and st.button("Add data", icon=":material/upload_file:", width="stretch"):
+        st.page_link(PAGES["settings"], label="Settings", icon=":material/settings:")
+        if not config.PUBLIC_DEMO and st.button("Add data", icon=":material/add:", width="stretch"):
             add_data_dialog()
         st.divider()
-        st.caption(f"**{case.name}** · {S['holders']} people and firms · {S['transactions']:,} transactions")
-        if case.name == config.DEMO_DIR.name:
-            st.caption(branding.DEMO_DATA_LABEL)
+        who = f"{ui.esc(PROFILE.name)} · {PROFILE.rank}<br>" if PROFILE.is_set else ""
+        demo = "Demo data · " if case.name == config.DEMO_DIR.name else ""
+        st.markdown(f"<div class='kd-side'>{who}{demo}{S['holders']} people and firms"
+                    f"</div>", unsafe_allow_html=True)
         ui.ai_status(LLM is not None, st.session_state["llm_cfg"]["model"] or config.LLM_MODEL, MODEL_MSG)
-        st.page_link(PAGES["settings"], label="Settings", icon=":material/settings:")
-        if PROFILE.is_set:
-            st.caption(f"{PROFILE.name} · {PROFILE.rank} · {PROFILE.posting}")
 
 
 if config.PUBLIC_DEMO:
-    st.markdown("<div style='background:rgba(217,119,6,.12);border:1px solid rgba(217,119,6,.35);border-radius:10px;"
-                "padding:8px 12px;font-size:.85rem;margin-bottom:10px'><b>Online demo</b> · all names, PANs and "
-                "transactions are synthetic. Uploading real data is disabled. The real tool runs fully offline "
-                "on the officer's own computer.</div>", unsafe_allow_html=True)
+    st.markdown("<div style='font-size:.8rem;color:#8A8580;margin:-1.2rem 0 1.2rem'>Online demo · synthetic data "
+                "only, uploads off, no AI model. The real tool runs fully offline on the officer's computer.</div>",
+                unsafe_allow_html=True)
 
 
 # ====================================================================== Ask (home)
@@ -379,14 +377,8 @@ def render_answer(ans):
 
 
 def page_ask():
-    hello = f"Good to see you, {PROFILE.name.split()[0]}." if PROFILE.is_set else "Ask in plain English."
-    ui.header(f"Ask {branding.APP_NAME}", f"{hello} I check the loaded data and documents, and show how I got "
-                                          "each answer.")
-    if not PROFILE.is_set:
-        st.caption("Tip: set your name, rank and posting in Settings to get starter questions for your desk.")
-    if LLM is None:
-        st.caption("The local AI model is not connected, so answers use ready-made templates. Questions about cases, "
-                   "money trails and links still work.")
+    hello = f"Good to see you, {ui.esc(PROFILE.name.split()[0])}. " if PROFILE.is_set else ""
+    ui.header(f"Ask {branding.APP_NAME}", f"{hello}Cases, revenue, circulars or any loaded table, in plain English.")
     top = A.risk.iloc[0]["name"] if len(A.risk) else ""
     trail = case.holder_name(A.chains[0]["start_holder"]) if A.chains else ""
     starters = prof.starter_questions(PROFILE, top=top, trail=trail)
@@ -426,10 +418,9 @@ def page_cases():
              ("Money in", inr_short(S["total_credits"]), "total credits"),
              ("Need review", f"{n_high + n_med}", f"{n_high} high · {n_med} medium", "red")])
     ui.section("Review queue")
-    st.caption("Highest risk first. Click a row to open the case.")
     qv = st.session_state.setdefault("queue_v", 0)
     flagged = r[r.risk_level != "LOW"]
-    st.caption(f"Showing all {len(flagged)} of {len(r)} people and firms that need review (the rest have no red flag).")
+    st.caption(f"All {len(flagged)} of {len(r)} that need review, highest risk first. Click a row to open the case.")
     ev = queue_table(flagged, f"queue-{qv}")
     if ev and ev.selection.rows:
         st.session_state["case_open"] = flagged.iloc[ev.selection.rows[0]]["holder_id"]
