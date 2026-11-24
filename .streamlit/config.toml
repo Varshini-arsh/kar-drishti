@@ -49,5 +49,5 @@ style = "normal"
 
 [theme.sidebar]
 backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F0FDFA"
+secondaryBackgroundColor = "#F7F7F6"
 borderColor = "#F0F0EE"

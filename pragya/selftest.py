@@ -31,7 +31,7 @@ from kar_drishti.data import build_duckdb, load_case  # noqa: E402
 from pragya import checker, uploads  # noqa: E402
 from pragya.base import CANT_ANSWER, rupees  # noqa: E402
 from pragya.law_agent import LawAgent  # noqa: E402
-from pragya.lead import Lead  # noqa: E402
+from pragya.lead import GENERAL_LABEL, Lead  # noqa: E402
 from pragya.library import NOT_STATED, OFFICER_DECIDES, Library  # noqa: E402
 from pragya.llm import FakeLLM, PragyaLLM  # noqa: E402
 from pragya.revenue import LEVELS, Revenue  # noqa: E402
@@ -248,6 +248,14 @@ def extra_checks(w: World) -> list[tuple[str, str, bool, str]]:
     ans = w.lead.ask("Which cases should I investigate first?")
     out.append(("model", "Checked model answer is used; at most 2 model calls", ans.source == "model"
                 and ans.llm_calls <= 2, f"source {ans.source}, calls {ans.llm_calls}"))
+    fake_gen = FakeLLM({"plan": '{"agents": ["none"]}', "general": "TDS is deducted by the payer; TCS is collected by the seller."})
+    w.lead.llm = fake_gen
+    ans = w.lead.ask("What is the difference between TDS and TCS?")
+    out.append(("model", "General question: labelled general answer, not presented as checked",
+                ans.text.startswith(GENERAL_LABEL) and ans.source == "general" and ans.check is None, ans.source))
+    ans = w.lead.ask("What is the hotel allowance?")
+    out.append(("model", "Office-rule trap stays 'Not stated' (no general guess)", NOT_STATED in ans.text
+                and GENERAL_LABEL not in ans.text, ans.source))
     w.lead.llm = None
     return out
 
@@ -267,9 +275,9 @@ def run_question(w: World, q: Q) -> tuple[bool, str, float, str]:
     ok = True
     if q.repeat > 1 and len({a.text for a in answers}) != 1:
         ok, notes = False, notes + [f"answers differ across {q.repeat} runs"]
-    if q.cannot:
-        if not ans.text.startswith(CANT_ANSWER):
-            ok, notes = False, notes + ["expected 'I can't answer this...'"]
+    if q.cannot:      # offline: "I can't answer..."; with a model: a clearly labelled general answer
+        if not (ans.text.startswith(CANT_ANSWER) or ans.text.startswith(GENERAL_LABEL)):
+            ok, notes = False, notes + ["expected 'I can't answer this...' or a labelled general answer"]
     else:
         if ans.text.startswith(CANT_ANSWER):
             ok, notes = False, notes + ["refused"]

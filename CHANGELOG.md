@@ -62,3 +62,8 @@ Plain-English notes, one line per change.
 ## Design update - white and minimal
 - Always white (dark mode removed at the officer's request); white sidebar with five links, Add data and one quiet status line.
 - Quieter headings, small uppercase section labels, thinner borders, charts without frames, fewer captions.
+
+## Officer profile in the sidebar, and general answers
+- Sidebar "Officer profile": Name, Designation, Office and Domain (posting); saved on this computer and printed on every DRAFT signature. Settings keeps Model, Data and a Signature preview.
+- Questions outside the loaded data now get a clearly labelled general answer from the local model ("General answer · not from your loaded data ... verify it"), never presented as checked. Without a model the "I can't answer..." message stays.
+- Office-rule questions not covered by the loaded circulars (e.g. hotel allowance) still say "Not stated in the loaded documents" - no general guess.

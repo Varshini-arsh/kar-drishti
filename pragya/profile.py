@@ -1,4 +1,4 @@
-"""Officer profile: name, rank and posting.
+"""Officer profile: name, rank (designation), posting (domain) and office.
 
 The posting (with the rank) decides:
   * the 4 starter questions on the Ask screen
@@ -82,6 +82,7 @@ class Profile:
     name: str = ""
     rank: str = "ITO"
     posting: str = "Assessing Officer"
+    office: str = ""          # e.g. "O/o the ITO, Ward 2(1), Pune"
 
     @property
     def designation(self) -> str:
@@ -129,4 +130,6 @@ def starter_questions(p: Profile, top: str = "", trail: str = "") -> list[str]:
 def signature_block(p: Profile) -> str:
     """Signature block for drafts. Always carries the DRAFT mark."""
     lines = [branding.DRAFT_MARK, "", "(" + (p.name.strip() or "Name of officer") + ")", p.designation, p.posting]
+    if p.office.strip():
+        lines.append(p.office.strip())
     return "\n".join(lines)

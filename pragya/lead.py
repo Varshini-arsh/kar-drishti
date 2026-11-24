@@ -46,6 +46,20 @@ Rules:
 - If FACTS come from more than one agent, cover each part of the question.
 - Do not decide the case; the officer decides. Use words like "indicates" or "needs verification"."""
 
+GENERAL_LABEL = ("General answer · not from your loaded data or documents, and not checked, so verify it with "
+                 "the Act, the circular or a senior officer before relying on it.")
+GENERAL_SYSTEM = """You are {app}, an assistant for Indian income-tax officers, answering from general knowledge.
+Rules:
+- Answer in 3 to 6 short, plain lines.
+- If you are not sure, say so plainly. Never invent section numbers, circular numbers, dates or amounts.
+- Income-tax law: the Income-tax Act, 2025 applies from 1 April 2026; earlier years remain under the 1961 Act.
+- If the question needs live or current information (weather, news, scores, prices, today's events), say that you
+  cannot know it because you run offline without internet.
+- Do not give a decision on any taxpayer's case; the officer decides."""
+# Office-rule questions: if the loaded circulars do not cover them, a general answer would only be a guess.
+OFFICE_RULE = re.compile(r"leave|tour|travel|allowance|\bda\b|\bta\b|work from home|\bwfh\b|office order|"
+                         r"circular|holiday|reimburs|travel claim|\bclaims? (for|within)", re.I)
+
 PLAN_SYSTEM = """Choose which specialists can answer an Indian income-tax officer's question.
 Specialists:
 - risk: fraud and risk detection on bank transactions and returns (red flags, risk scores, money trails, links)
@@ -150,11 +164,21 @@ class Lead:
             if res.ok:
                 results.append(res)
         if not results:
+            general = self.general_answer(question, budget, trace)
+            if general:
+                audit.log("answer", self.audit_path, question=question, source="general")
+                return Answer(question, general, [], trace, None, "general", budget.used, time.time() - t0)
             text = self.cannot_answer()
             trace.append("No specialist could answer from the loaded data, so nothing was made up.")
             audit.log("answer", self.audit_path, question=question, source="cannot answer")
             return Answer(question, text, [], trace, None, "cannot answer", budget.used, time.time() - t0)
         ans = self.write(question, results, budget, trace)
+        not_stated = all(r.agent == "Law agent" and r.extra.get("status") == "not stated" for r in results)
+        if not_stated and not OFFICE_RULE.search(question):
+            general = self.general_answer(question, budget, trace)
+            if general:
+                ans.text = ans.text + "\n\n" + general
+                ans.source = "documents + general"
         ans.seconds = time.time() - t0
         audit.log("answer", self.audit_path, question=question, agents=ans.agents, source=ans.source,
                   checker=ans.check.summary() if ans.check else None, llm_calls=ans.llm_calls)
@@ -229,6 +253,25 @@ class Lead:
                      + (f" ({', '.join(budget.log)})" if budget.log else "") + ".")
         return Answer(question, text, results, trace, final, source, budget.used)
 
+    # ------------------------------------------------------------------ general knowledge (labelled, not checked)
+    def general_answer(self, question: str, budget: Budget, trace: list) -> str | None:
+        """A clearly labelled answer from the local model's general knowledge, when no loaded data or document
+        covers the question. Not possible without a local model (then the 'I can't answer' message is shown)."""
+        if self.llm is None or not budget.take("general"):
+            return None
+        try:
+            text = self.llm.chat([{"role": "system", "content": GENERAL_SYSTEM.format(app=self.app_name)},
+                                  {"role": "user", "content": question}], purpose="general").strip()
+        except LLMError as e:
+            trace.append(f"Local model unavailable for a general answer ({e}).")
+            return None
+        if not text:
+            return None
+        trace.append("Nothing in the loaded data or documents covers this, so the local model answered from general "
+                     "knowledge. This part is labelled and was NOT checked against your data.")
+        trace.append(f"Model calls used: {budget.used} of {budget.limit} ({', '.join(budget.log)}).")
+        return f"{GENERAL_LABEL}\n\n{text}"
+
     # ------------------------------------------------------------------ out of scope
     def cannot_answer(self) -> str:
         can = []
@@ -241,4 +284,5 @@ class Lead:
         if self.law is not None and self.law.ready():
             can.append("Quote the loaded circulars and Acts (e.g. 'How many casual leave days are allowed?')")
         can.append("Answer questions on the loaded tables: " + self.data.counts())
+        can.append("Answer general questions too, clearly labelled, once a local AI model (Ollama) is connected")
         return CANT_ANSWER + "\n" + "\n".join(f"- {c}" for c in can)

@@ -67,7 +67,7 @@ from kar_drishti.llm import LLMError  # noqa: E402
 from kar_drishti.money_trail import inr, inr_short  # noqa: E402
 from pragya import audit, uploads  # noqa: E402
 from pragya import profile as prof  # noqa: E402
-from pragya.lead import Lead  # noqa: E402
+from pragya.lead import GENERAL_LABEL, Lead  # noqa: E402
 from pragya.revenue import load_demo as load_demo_revenue, LEVELS, Revenue  # noqa: E402
 from pragya.revenue_agent import RevenueAgent  # noqa: E402
 from pragya.selftest_risk import risk_self_test  # noqa: E402
@@ -289,6 +289,28 @@ def add_data_dialog():
         st.rerun()
 
 
+# ====================================================================== officer profile (sidebar)
+def profile_box():
+    """Name, designation, office and domain. Decides the starter questions and the signature on every draft."""
+    label = (f"{PROFILE.name} · {PROFILE.rank}" if PROFILE.is_set else "Officer profile")
+    with st.expander(label, icon=":material/badge:", expanded=not PROFILE.is_set):
+        with st.form("profile_form", border=False):
+            ranks = list(prof.RANKS)
+            name = st.text_input("Name", PROFILE.name, placeholder="e.g. A. Sharma")
+            rank = st.selectbox("Designation", ranks, index=ranks.index(PROFILE.rank),
+                                help="The full title (e.g. Income Tax Officer) is printed on drafts")
+            office = st.text_input("Office", PROFILE.office, placeholder="e.g. O/o the ITO, Ward 2(1), Pune")
+            posting = st.selectbox("Domain", prof.POSTINGS, index=prof.POSTINGS.index(PROFILE.posting),
+                                   help="Your posting: decides the 4 starter questions on Ask")
+            if st.form_submit_button("Save", width="stretch"):
+                new = prof.Profile(name=name.strip(), rank=rank, posting=posting, office=office.strip())
+                if not config.PUBLIC_DEMO:          # online demo: keep the profile for this visitor's session only
+                    prof.save_profile(new)
+                audit.log("approval", what="officer profile saved", rank=rank, posting=posting)
+                st.session_state["officer_profile"] = new
+                st.rerun()
+
+
 # ====================================================================== sidebar
 def sidebar():
     with st.sidebar:
@@ -300,10 +322,9 @@ def sidebar():
         if not config.PUBLIC_DEMO and st.button("Add data", icon=":material/add:", width="stretch"):
             add_data_dialog()
         st.divider()
-        who = f"{ui.esc(PROFILE.name)} · {PROFILE.rank}<br>" if PROFILE.is_set else ""
+        profile_box()
         demo = "Demo data · " if case.name == config.DEMO_DIR.name else ""
-        st.markdown(f"<div class='kd-side'>{who}{demo}{S['holders']} people and firms"
-                    f"</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='kd-side'>{demo}{S['holders']} people and firms</div>", unsafe_allow_html=True)
         ui.ai_status(LLM is not None, st.session_state["llm_cfg"]["model"] or config.LLM_MODEL, MODEL_MSG)
 
 
@@ -346,7 +367,14 @@ def render_answer(ans):
     if len(ans.results) == 1 and ans.results[0].quotes:          # law answer: one line, then the quote cards
         st_ = ans.results[0].extra.get("status")
         text = text.split("\n")[0] if st_ in ("conflict", "same") else f"{ans.results[0].quotes[0]['doc']} says:"
-    st.markdown(md_lines(text))
+    if GENERAL_LABEL in text:                     # model's general knowledge: clearly labelled, not checked
+        before, _, after = text.partition(GENERAL_LABEL)
+        if before.strip():
+            st.markdown(md_lines(before.strip()))
+        st.caption(":material/info: " + GENERAL_LABEL)
+        st.markdown(md_lines(after.strip()))
+    else:
+        st.markdown(md_lines(text))
     for r in ans.results:
         show_quotes(r)
         if r.fig is not None:
@@ -372,7 +400,9 @@ def render_answer(ans):
                 st.code(r.sql, language="sql")
         if ans.check is not None:
             (st.success if ans.check.ok else st.error)("Checker: " + ans.check.summary(), icon=":material/verified:")
-        st.caption(f"Written by {'the local model' if ans.source == 'model' else 'code from the tool output'} · "
+        if "general" in ans.source:
+            st.caption("The general-knowledge part was written by the local model and is not checked against your data.")
+        st.caption(f"Written by {'the local model' if ans.source in ('model', 'general') else 'code from the tool output'} · "
                    f"{ans.seconds:.1f} s. Numbers come from code run on the data, never from the AI's memory.")
 
 
@@ -888,42 +918,15 @@ def page_library():
 
 # ====================================================================== Settings
 def page_settings():
-    ui.header("Settings", "Your profile, the local AI model and the data in use. Everything stays on this computer.")
-    t_prof, t_model, t_data = st.tabs(["Officer profile", "Model", "Data"])
-    with t_prof:
-        profile_settings()
+    ui.header("Settings", "The local AI model, the data in use and your signature. Everything stays on this computer.")
+    t_model, t_data, t_sig = st.tabs(["Model", "Data", "Signature"])
+    with t_sig:
+        st.caption("Set your name, designation, office and domain in the sidebar. This block ends every draft.")
+        st.code(prof.signature_block(PROFILE), language=None)
     with t_model:
         model_settings()
     with t_data:
         data_settings()
-
-
-def profile_settings():
-    st.caption("Your rank and posting decide the 4 starter questions on the Ask screen and the signature block on "
-               "every draft. Saved only on this computer.")
-    ranks, posts = list(prof.RANKS), prof.POSTINGS
-    with st.form("profile_form"):
-        name = st.text_input("Name", PROFILE.name, placeholder="Your name as it should appear on drafts")
-        c1, c2 = st.columns(2)
-        rank = c1.selectbox("Rank", ranks, index=ranks.index(PROFILE.rank), format_func=lambda r: f"{r} · {prof.RANKS[r]}")
-        posting = c2.selectbox("Posting", posts, index=posts.index(PROFILE.posting))
-        if st.form_submit_button("Save profile", type="primary", icon=":material/save:"):
-            new = prof.Profile(name=name.strip(), rank=rank, posting=posting)
-            if not config.PUBLIC_DEMO:          # online demo: keep the profile for this visitor's session only
-                prof.save_profile(new)
-            audit.log("approval", what="officer profile saved", rank=rank, posting=posting)
-            st.session_state["officer_profile"] = new
-            st.rerun()
-    c1, c2 = st.columns(2)
-    with c1:
-        ui.section("Your starter questions")
-        top = A.risk.iloc[0]["name"] if len(A.risk) else ""
-        trail = case.holder_name(A.chains[0]["start_holder"]) if A.chains else ""
-        for q in prof.starter_questions(PROFILE, top=top, trail=trail):
-            st.markdown(f"- {q}")
-    with c2:
-        ui.section("Signature block on drafts")
-        st.code(prof.signature_block(PROFILE), language=None)
 
 
 def model_settings():
