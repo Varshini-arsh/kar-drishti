@@ -343,7 +343,7 @@ def sidebar():
 
 if config.PUBLIC_DEMO:
     st.markdown("<div style='font-size:.8rem;color:#8A8580;margin:0 0 1rem'>Online demo · synthetic data "
-                "only · uploads from your computer are off · AI wording by "
+                "only unless you upload test files (private to your visit) · AI wording by "
                 + ("Groq (cloud)" if st.session_state["llm_cfg"]["provider"] == "groq" else "no model") +
                 ". The real tool runs fully offline on the officer's computer.</div>",
                 unsafe_allow_html=True)
@@ -1245,7 +1245,7 @@ def _synthetic_files() -> list[dict]:
 def _our_datasets():
     saved = {e["sha256"] for e in uploads.read_manifest(UP_DIR)}
     st.markdown(f"These are the synthetic (fake) datasets that come with {branding.APP_NAME}. Tick what you want, check the "
-                "preview, then press **Add**. Nothing is uploaded from your computer.")
+                "preview, then press **Add**.")
 
     # 1. case data for the Cases page: pick one
     st.markdown("**1 · Case data for the Cases page** (pick one)")
@@ -1340,8 +1340,10 @@ def _our_datasets():
 
 def _own_files():
     st.markdown("**Optional.** Add your own files from this computer. Pick what kind of data it is:")
-    kind = st.segmented_control("Kind", ["Bank statements", "Case folder", "Revenue tables", "Circulars & documents",
-                                         "Any other file"], default="Bank statements", key="own-kind",
+    kinds = ["Bank statements", "Case folder", "Revenue tables", "Circulars & documents", "Any other file"]
+    if config.PUBLIC_DEMO:                      # a folder path would point at the server, not the visitor's computer
+        kinds.remove("Case folder")
+    kind = st.segmented_control("Kind", kinds, default="Bank statements", key="own-kind",
                                 label_visibility="collapsed")
     if kind == "Bank statements":
         st.caption("For the Cases page. One file per bank account, CSV or Excel exported from net banking. Date, "
@@ -1428,12 +1430,10 @@ def add_data_dialog():
         _in_use_now()
     with t3:
         if config.PUBLIC_DEMO:
-            st.info("Uploading files from your computer is turned off in this online demo, so no real data is ever "
-                    "sent here. Use **Our datasets**, or download the offline version, which accepts any file "
-                    "(CSV, Excel, JSON, TXT, Word, PDF, photos) and keeps it on your own computer.",
-                    icon=":material/lock:")
-        else:
-            _own_files()
+            st.warning("This is an online demo: files you upload go to the demo server and, for AI answers, to Groq. "
+                       "Use test or sample files only, never real taxpayer data. What you upload is private to your "
+                       "visit and is not shown to other visitors.", icon=":material/warning:")
+        _own_files()
 
 
 # ====================================================================== navigation
