@@ -72,6 +72,9 @@ def offline_example(question: str, gst: bool) -> tuple[str, str] | None:
     return (best[1], best[2]) if best else None
 
 
+# bank-transaction words: these questions go to the worked examples or the model, not the quick table rule
+BANK_WORDS = re.compile(r"\b(cash|deposit|withdraw|credit|debit|transaction|bank|income|turnover|itr|neft|rtgs|upi|"
+                        r"imps|cheque|atm)", re.I)
 NUMERIC_TYPES = ("INT", "DOUBLE", "DECIMAL", "FLOAT", "REAL", "NUMERIC", "HUGEINT", "BIGINT", "SMALLINT")
 GROUP_WORDS = re.compile(r"\b(by|per|each|wise|for every)\b", re.I)
 
@@ -175,7 +178,8 @@ class DataAgent:
         sql, how, steps, df = None, "", [], None
         ex_first = offline_example(question, self.gst)        # a close worked example: no model call needed
         rule_first = simple_sql(question, self.con) if ex_first is None and re.search(
-            r"how many|count|number of|total|sum|average|mean", question, re.I) else None
+            r"how many|count|number of|total|sum|average|mean", question, re.I) and not (
+            BANK_WORDS.search(question) and llm is not None) else None
         if ex_first is not None or rule_first is not None:   # exact built-in query: no model call needed
             llm = None
         if llm is not None and budget is not None and budget.take("sql"):

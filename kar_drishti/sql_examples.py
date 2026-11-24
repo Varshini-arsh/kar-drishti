@@ -29,12 +29,33 @@ WHERE t.mode IN ('CASH', 'ATM') AND t.direction = 'DR'
 GROUP BY month ORDER BY month"""),
 
     ("Who received more than 10 times their declared income?",
-     """SELECT h.holder_id, h.name, h.declared_income, ROUND(SUM(t.amount)) AS total_credits,
-       ROUND(SUM(t.amount) / NULLIF(h.declared_income, 0), 1) AS times_income
+     """SELECT h.holder_id, h.name, h.holder_type,
+       CASE WHEN h.holder_type = 'FIRM' AND h.gross_receipts > 0 THEN h.gross_receipts ELSE h.declared_income END
+         AS declared_income_or_turnover,
+       ROUND(SUM(t.amount)) AS total_credits,
+       ROUND(SUM(t.amount) / NULLIF(CASE WHEN h.holder_type = 'FIRM' AND h.gross_receipts > 0
+             THEN h.gross_receipts ELSE h.declared_income END, 0), 1) AS times_declared
 FROM transactions t JOIN holders h USING (holder_id)
 WHERE t.direction = 'CR' AND h.filed
-GROUP BY h.holder_id, h.name, h.declared_income
-HAVING SUM(t.amount) > 10 * h.declared_income ORDER BY times_income DESC LIMIT 50"""),
+GROUP BY h.holder_id, h.name, h.holder_type, h.gross_receipts, h.declared_income
+HAVING SUM(t.amount) > 10 * (CASE WHEN h.holder_type = 'FIRM' AND h.gross_receipts > 0
+             THEN h.gross_receipts ELSE h.declared_income END)
+ORDER BY times_declared DESC LIMIT 50"""),
+
+    ("Total cash deposits this year",
+     """SELECT ROUND(SUM(t.amount)) AS total_cash_deposits, COUNT(*) AS deposits
+FROM transactions t
+WHERE t.mode = 'CASH' AND t.direction = 'CR'"""),
+
+    ("Total cash withdrawals this year",
+     """SELECT ROUND(SUM(t.amount)) AS total_cash_withdrawals, COUNT(*) AS withdrawals
+FROM transactions t
+WHERE t.mode IN ('CASH', 'ATM') AND t.direction = 'DR'"""),
+
+    ("Total money received (all credits) this year",
+     """SELECT ROUND(SUM(t.amount)) AS total_credits, COUNT(*) AS credits
+FROM transactions t
+WHERE t.direction = 'CR'"""),
 
     ("Top 10 holders by money sent through NEFT",
      """SELECT h.holder_id, h.name, ROUND(SUM(t.amount)) AS total_neft_sent, COUNT(*) AS payments

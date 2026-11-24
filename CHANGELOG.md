@@ -95,3 +95,14 @@ Plain-English notes, one line per change.
 - In the online demo (public_demo.flag), **Add data** is shown: visitors add the built-in synthetic datasets, and what they add is kept in a private temporary folder for their visit only. Uploading from a visitor's computer stays off.
 - The online demo uses Groq automatically when `GROQ_API_KEY` is set in Streamlit Cloud **Secrets** (or the environment); visitors cannot change the model. The top line says AI wording is by Groq (cloud).
 - `streamlit_cloud/` is updated to this version (plus OCR packages and `packages.txt`); `HOW_TO_DEPLOY_STREAMLIT.md` has the steps.
+
+## Final checks on the live demo - fixes
+- Data agent: "total cash deposits / withdrawals / credits this year" now use exact ready-made queries (the quick table rule had picked last year's revenue collections because of the word "year"); bank-transaction questions no longer go to that quick rule when the AI model is connected.
+- "Who received more than N times their declared income?" now uses turnover for firms (the same basis as the income-mismatch rule): 16 people and firms in the demo data.
+- Online demo: visitors can upload their own test files (private to their visit, with a warning); "Case folder" is hidden online; wording no longer says "on this computer" where that is not true.
+
+## Fixes from the exercise walk-through (25 Nov 2026)
+- "Who is suspicious?" and similar general questions now get the risk ranking instead of "not sure".
+- Scanned documents: text recognition no longer runs words and dates together ("Hotelallowanceontour" -> "Hotel allowance on tour", "5June2023" -> "5 June 2023"), so the circular's title, number and date are found. Older saved OCR text gets the same clean-up.
+- Draft reports made on the online demo say "Prepared in the online demo (synthetic data)" instead of "Prepared offline".
+- Published to the online demo: correct totals for "cash deposits this year" and "more than 10 times declared income" (turnover for firms).

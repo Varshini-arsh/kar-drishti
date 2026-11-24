@@ -455,7 +455,8 @@ def page_cases():
         return case_detail(st.session_state["case_open"])
     r = A.risk
     n_high, n_med = int((r.risk_level == "HIGH").sum()), int((r.risk_level == "MEDIUM").sum())
-    ui.header("Cases", f"{S['date_from']:%d %b %Y} to {S['date_to']:%d %b %Y} · checked on this computer · "
+    ui.header("Cases", f"{S['date_from']:%d %b %Y} to {S['date_to']:%d %b %Y} · "
+              f"{'checked on the demo server' if config.PUBLIC_DEMO else 'checked on this computer'} · "
                        + ("income-tax checks + GST signals" if A.gst_on else "income-tax checks (GST add-on off)"))
     view = st.segmented_control("View", ["Review queue", "Self-test on demo data"], default="Review queue",
                                 label_visibility="collapsed") if case.ground_truth else "Review queue"
@@ -733,7 +734,9 @@ def how_it_works():
         "3. **Score**: each red flag adds up to its maximum points, scaled by how strong the evidence is; the total is "
         f"capped at 100. High ≥ {config.RISK_HIGH}, Medium ≥ {config.RISK_MEDIUM}. Any red flag means at least Medium.\n"
         "4. **Ask**: the agents pick a tool, run it on the data and explain the result. It never makes up "
-        "numbers, and everything runs on this computer.")
+        "numbers" + (". In this online demo the wording comes from Groq (cloud); the offline version runs "
+                     "everything on the officer's computer." if config.PUBLIC_DEMO else
+                     ", and everything runs on this computer."))
     with st.expander("Maximum points per red flag"):
         st.dataframe(pd.DataFrame([{"red flag": LABEL.get(k, k), "max points": w[k]} for k in checks]),
                      hide_index=True, width="stretch")

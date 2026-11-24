@@ -34,6 +34,11 @@ RISK_WORDS = re.compile(r"investigat|priorit|risk|flagged|flag\b|suspicious|why 
                         r"\bgst\b|\bitc\b|input tax|e-?way|circular trading|fake invoice|review first|"
                         r"which cases|case(s)? (should|to)|income mismatch", re.I)
 
+GENERAL_RISK = re.compile(r"suspicious|suspect|risky|high.?risk|most risk|"
+                          r"who (should|to) (i )?(check|review|investigate)", re.I)
+SPECIFIC_RISK = re.compile(r"gst|\bitc\b|input tax|invoice|e-?way|cash|round|mule|pass.?through|shell|network|linked|"
+                           r"non.?filer|structur|income|trail|money|trace", re.I)
+
 
 def wants_risk(question: str, has_holder: bool) -> bool:
     if RISK_WORDS.search(question):
@@ -59,6 +64,8 @@ class RiskAgent:
                                steps=["The question sets its own number threshold; passing it to the Data agent."])
         if pattern and not holders:
             return self.pattern_list(pattern, checked)
+        if not holders and GENERAL_RISK.search(question) and not SPECIFIC_RISK.search(question):   # 'who is suspicious?' and similar: the ranking answers it
+            question = "Which cases should I investigate first?"
         resp = self.engine.ask(question)
         if resp.tool == "sql":          # nothing risk-specific in the question: let the Data agent answer
             return AgentResult(self.name, "none", ok=False, checked=checked,

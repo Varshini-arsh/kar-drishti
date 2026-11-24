@@ -73,12 +73,62 @@ def _lines(result) -> list[str]:
     return lines
 
 
+# Words used to split OCR run-togethers such as "allowanceon" -> "allowance on" (no extra library needed).
+_COMMON = set("""a an the is are was were be been being on of to in into for by at as or and not no nor if when where
+which who whom whose what with without from per up upto under over above below shall should may must will would can
+could only any all each every this that these those it its his her their there here than then also such other same
+real test tests demo document documents fictitious written government circular circulars office offices order orders
+notification head heads paid pay payable payment provided provide allowance allowances hotel hotels tour tours travel
+travelling claim claims bill bills attached attach stay stays night nights accommodation leave leaves day days casual
+earned study rate rates officer officers staff rule rules revised guidelines dated subject date amount amounts rupees
+rs year years month months calendar next end lapse carried forward unavailed daily lodging boarding admissible
+station stations city cities class government's department departments income tax taxes return returns""".split())
+_SHORT = {"a", "an", "on", "of", "to", "in", "is", "no", "be", "by", "at", "as", "or", "up", "it", "if"}
+_MONTHS = r"(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)"
+
+
+def _split_word(tok: str, vocab: set) -> str:
+    low = tok.lower()
+    if len(tok) < 5 or low in vocab:
+        return tok
+    best = [None] * (len(low) + 1)          # best[i] = fewest parts covering low[:i]
+    best[0] = []
+    for i in range(1, len(low) + 1):
+        for j in range(max(0, i - 20), i):
+            if best[j] is None:
+                continue
+            part = low[j:i]
+            if part in vocab and (len(part) > 2 or part in _SHORT):
+                cand = best[j] + [(j, i)]
+                if best[i] is None or len(cand) < len(best[i]):
+                    best[i] = cand
+    parts = best[len(low)]
+    if not parts or len(parts) < 2:
+        return tok
+    return " ".join(tok[a:b] for a, b in parts)
+
+
+def split_joined(text: str) -> str:
+    import re
+    from collections import Counter
+    words = Counter(w.lower() for w in re.findall(r"[A-Za-z]{3,}", text))
+    vocab = _COMMON | {w for w, n in words.items() if n >= 2} | _SHORT
+    return re.sub(r"[A-Za-z]{5,}", lambda m: _split_word(m.group(0), vocab), text)
+
+
 def tidy(text: str) -> str:
-    """Undo common OCR word-joining: 'OfficeCircularNo.PRG/1' -> 'Office Circular No. PRG/1'."""
+    """Undo common OCR word-joining: 'OfficeCircularNo.PRG/1' -> 'Office Circular No. PRG/1',
+    '5June2023' -> '5 June 2023', 'Hotelallowanceontour' -> 'Hotel allowance on tour'."""
     import re
     text = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", text)
     text = re.sub(r"\b(No|Dated|Date|Subject|Sub)([.:])(?=\S)", r"\1\2 ", text)
-    return text
+    text = re.sub(r"(?<=\d)(?=" + _MONTHS + r")", " ", text)
+    text = re.sub(r"\b" + _MONTHS + r"(?=\d)", r"\1 ", text)
+    text = re.sub(r"(?m)^(\d+\.)(?=[A-Za-z])", r"\1 ", text)
+    text = re.sub(r"\)(?=[A-Za-z])", ") ", text)
+    text = re.sub(r"(?<=[a-z])\.(?=[A-Z][a-z])", ". ", text)
+    text = re.sub(r"(?<=[A-Za-z])-(?=[a-z])", " - ", text) if re.search(r"[A-Z]{5,}-[a-z]", text) else text
+    return split_joined(text)
 
 
 def image_text(image) -> str:
@@ -109,7 +159,7 @@ def pdf_text(data: bytes, pages: list[int] | None = None) -> tuple[dict[int, str
 def cached(sha256: str) -> str | None:
     f = CACHE_DIR / f"{sha256}.txt"
     try:
-        return f.read_text(encoding="utf-8") if f.exists() else None
+        return tidy(f.read_text(encoding="utf-8")) if f.exists() else None   # older saved text gets the same clean-up
     except OSError:
         return None
 
