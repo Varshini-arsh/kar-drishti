@@ -1069,7 +1069,8 @@ def _show_ack() -> bool:
     st.success(f"**{ack['title']}**", icon=":material/check_circle:")
     for ln in ack["lines"]:
         st.markdown(f"- {ln}")
-    st.caption(f"Used by: {ack['where']}. Saved on this computer only.")
+    st.caption(f"Used by: {ack['where']}. " + ("Kept for this visit only; other visitors do not see it."
+                                                if config.PUBLIC_DEMO else "Saved on this computer only."))
     if ack.get("questions"):
         st.markdown("**Ask about it** (opens Ask with the answer)")
         for i, q in enumerate(ack["questions"]):
@@ -1418,7 +1419,8 @@ def add_data_dialog():
         return
     st.caption(f"Add {branding.APP_NAME}'s synthetic datasets with one click, see what is in use, or upload your own files "
                "(any format: tables, PDFs, Word, text or photos). "
-               "Everything stays on this computer.")
+               + ("In this online demo, what you add is private to your visit."
+                  if config.PUBLIC_DEMO else "Everything stays on this computer."))
     t1, t2, t3 = st.tabs(["Our datasets", "In use now", "Upload your own (optional)"])
     with t1:
         _our_datasets()
