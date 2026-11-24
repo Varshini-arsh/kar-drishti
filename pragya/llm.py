@@ -30,6 +30,27 @@ MAX_CALLS_PER_QUESTION = 2
 # Admin switch: allow a non-local "Department server" address (off by default).
 ALLOW_DEPARTMENT_SERVER = os.getenv("PRAGYA_ALLOW_DEPARTMENT_SERVER", "0") == "1"
 
+# Optional cloud runtime: Groq (OpenAI-compatible, needs internet and an API key).
+# Off unless the user picks it in Settings > Model or sets KD_LLM_PROVIDER=groq / GROQ_API_KEY.
+# With Groq, the question and the facts needed to answer it are sent to Groq: use it with demo data.
+GROQ_URL = "https://api.groq.com/openai"
+GROQ_DEFAULT_MODEL = os.getenv("PRAGYA_GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_PREFERRED = [GROQ_DEFAULT_MODEL, "llama-3.3-70b-versatile", "openai/gpt-oss-120b", "llama-3.1-8b-instant"]
+
+
+def groq_key() -> str:
+    return os.getenv("GROQ_API_KEY", "").strip()
+
+
+def choose_groq_model(models: list[str], wanted: str | None = None) -> tuple[str | None, str]:
+    if not models:
+        return None, "Groq did not list any models. Check the API key and the internet connection."
+    if wanted in models:
+        return wanted, f"Using {wanted} on Groq (cloud)."
+    pick = next((m for m in GROQ_PREFERRED if m in models), None) or next(
+        (m for m in models if "llama" in m and "guard" not in m), models[0])
+    return pick, f"Using {pick} on Groq (cloud)."
+
 
 def _installed(name: str, models: list[str]) -> str | None:
     """Exact installed name for `name` ('qwen2.5:3b' also matches 'qwen2.5:3b-instruct-q4_K_M')."""
@@ -89,9 +110,32 @@ class PragyaLLM(LocalLLM):
     """LocalLLM with temperature 0, a fixed seed and thinking switched off."""
 
     def __init__(self, provider: str = "ollama", base_url: str = "http://localhost:11434",
-                 model: str = DEFAULT_MODEL, timeout: int = 240, department_server: bool = False):
-        super().__init__(provider, base_url, model, timeout,
-                         allow_remote=department_server and ALLOW_DEPARTMENT_SERVER)
+                 model: str = DEFAULT_MODEL, timeout: int = 240, department_server: bool = False,
+                 api_key: str | None = None):
+        is_groq = provider == "groq"
+        super().__init__(provider, GROQ_URL if is_groq else base_url, model, 60 if is_groq else timeout,
+                         allow_remote=is_groq or (department_server and ALLOW_DEPARTMENT_SERVER))
+        self.api_key = (api_key or groq_key()) if is_groq else (api_key or "")
+
+    @property
+    def where(self) -> str:
+        return "Groq (cloud)" if self.provider == "groq" else "the local model"
+
+    def _headers(self) -> dict:
+        return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+
+    def list_models(self) -> list[str]:
+        if self.provider != "groq":
+            return super().list_models()
+        if not self.api_key:
+            return []
+        try:
+            r = requests.get(f"{self.base_url}/v1/models", headers=self._headers(), timeout=8)
+            r.raise_for_status()
+            return sorted(m["id"] for m in r.json().get("data", []) if m.get("active", True)
+                          and not any(w in m["id"] for w in ("whisper", "tts", "guard", "prompt-")))
+        except Exception:
+            return []
 
     def chat(self, messages: list[dict], json_mode: bool = False, temperature: float = TEMPERATURE,
              purpose: str = "") -> str:
@@ -112,15 +156,27 @@ class PragyaLLM(LocalLLM):
             body = {"model": self.model, "messages": messages, "temperature": temperature, "seed": SEED}
             if json_mode:
                 body["response_format"] = {"type": "json_object"}
-            r = requests.post(f"{self.base_url}/v1/chat/completions", json=body, timeout=self.timeout)
+            r = requests.post(f"{self.base_url}/v1/chat/completions", json=body, headers=self._headers(),
+                              timeout=self.timeout)
+            if r.status_code == 400 and (json_mode or "seed" in r.text.lower()):   # option not supported: retry plain
+                body.pop("response_format", None)
+                body.pop("seed", None)
+                r = requests.post(f"{self.base_url}/v1/chat/completions", json=body, headers=self._headers(),
+                                  timeout=self.timeout)
+            if self.provider == "groq" and r.status_code == 401:
+                raise LLMError("Groq did not accept the API key. Check it in Settings > Model.")
+            if self.provider == "groq" and r.status_code == 429:
+                raise LLMError("Groq's free-tier limit was reached. Wait a minute and ask again.")
             r.raise_for_status()
             return strip_thinking(r.json()["choices"][0]["message"]["content"])
         except requests.exceptions.ConnectionError as e:
+            if self.provider == "groq":
+                raise LLMError("Cannot reach Groq. Groq needs an internet connection.") from e
             raise LLMError(f"Cannot reach the local model at {self.base_url}. Is Ollama running?") from e
         except requests.exceptions.Timeout as e:
-            raise LLMError("The local model took too long to answer. Try a smaller model or a shorter question.") from e
+            raise LLMError(f"{self.where.capitalize()} took too long to answer. Try a shorter question.") from e
         except (KeyError, ValueError, requests.HTTPError) as e:
-            raise LLMError(f"Unexpected reply from the local model server: {e}") from e
+            raise LLMError(f"Unexpected reply from {self.where}: {e}") from e
 
     def chat_json(self, messages: list[dict], purpose: str = "") -> dict:
         return parse_json(self.chat(messages, json_mode=True, purpose=purpose))

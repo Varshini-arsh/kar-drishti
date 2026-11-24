@@ -5,3 +5,4 @@ _update.tgz
 data/uploads/
 data/audit_log.jsonl
 data/officer_profile.json
+.streamlit/secrets.toml

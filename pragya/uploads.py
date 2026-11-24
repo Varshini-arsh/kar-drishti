@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import audit
+from . import audit, ocr
 
 UPLOAD_DIR = Path(__file__).resolve().parents[1] / "data" / "uploads"
 
@@ -41,6 +41,7 @@ TABLE_NAME = {"bank statement": "bank_statement", "holder list": "holder_list", 
               "recovery actions": "recovery_actions", "refunds": "refunds"}
 
 SCANNED_PDF = "Scanned PDF: text could not be read"
+IMAGE_EXT = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp")
 
 
 @dataclass
@@ -74,11 +75,13 @@ def read_file(name: str, data: bytes) -> Parsed:
         elif ext == ".docx":
             p.text = docx_text(data)
         elif ext == ".pdf":
-            p.text, p.note = pdf_text(data)
+            p.text, p.note = pdf_text(data, p.sha256)
+        elif ext in IMAGE_EXT:
+            p.text, p.note = image_text(data, p.sha256)
         elif ext in (".txt", ".md", ".text"):
             p.text = data.decode("utf-8", errors="ignore")
         else:
-            p.note = f"File type '{ext or 'unknown'}' is not supported. Use CSV, XLSX, XLS, JSON, TXT, DOCX or PDF."
+            p.note = f"File type '{ext or 'unknown'}' is not supported. Use CSV, XLSX, XLS, JSON, TXT, DOCX, PDF or an image (PNG, JPG, TIFF)."
     except Exception as e:                       # a bad file must never crash the app
         p.note = f"Could not read this file: {str(e).splitlines()[0][:200]}"
     p.tables = [(s, _clean(df)) for s, df in p.tables]
@@ -130,16 +133,59 @@ def docx_text(data: bytes) -> str:
     return "\n".join(lines).strip()
 
 
-def pdf_text(data: bytes) -> tuple[str, str]:
+def _has_text(t: str) -> bool:
+    return len(re.sub(r"\s", "", t or "")) >= 20
+
+
+def pdf_text(data: bytes, sha256: str = "") -> tuple[str, str]:
+    """Text of a PDF. Pages with no text layer (scanned) are read with offline OCR when it is installed."""
     try:
         from pypdf import PdfReader
+        pages = [(pg.extract_text() or "").strip() for pg in PdfReader(io.BytesIO(data)).pages]
     except ImportError:
-        return "", "Reading PDFs needs the pypdf package: run  pip install pypdf"
-    reader = PdfReader(io.BytesIO(data))
-    text = "\n".join((pg.extract_text() or "") for pg in reader.pages).strip()
-    if len(re.sub(r"\s", "", text)) < 20:
-        return "", SCANNED_PDF
-    return text, ""
+        if not ocr.pdf_pages_available():
+            return "", "Reading PDFs needs the pypdf package: run  pip install pypdf"
+        import pypdfium2 as pdfium                     # pypdfium2 can read the text layer too
+        pdf = pdfium.PdfDocument(data)
+        pages = [(pdf[i].get_textpage().get_text_range() or "").strip() for i in range(len(pdf))]
+    scanned = [i for i, t in enumerate(pages) if not _has_text(t)]
+    if not scanned:
+        return "\n".join(pages).strip(), ""
+    if not (ocr.available() and ocr.pdf_pages_available()):
+        text = "\n".join(pages).strip()
+        if _has_text(text):
+            return text, f"{len(scanned)} scanned page(s) could not be read. {ocr.INSTALL_HINT}"
+        return "", f"{SCANNED_PDF}. {ocr.INSTALL_HINT}"
+    key = f"{sha256}-pdf" if sha256 else ""
+    hit = ocr.cached(key) if key else None
+    if hit is not None:
+        text = hit
+    else:
+        read, total = ocr.pdf_text(data, scanned)
+        for i, t in read.items():
+            pages[i] = t
+        text = "\n".join(pages).strip()
+        if key:
+            ocr.save_cache(key, text)
+    if not _has_text(text):
+        return "", f"{SCANNED_PDF}: text recognition found no readable text (is the scan clear and in English?)."
+    extra = f" Only the first {ocr.MAX_PAGES} scanned pages were read." if len(scanned) > ocr.MAX_PAGES else ""
+    return text, ocr.OCR_NOTE + extra
+
+
+def image_text(data: bytes, sha256: str = "") -> tuple[str, str]:
+    """Text from a photo or scan of a document (PNG/JPG/TIFF) using offline OCR."""
+    if not ocr.available():
+        return "", f"This is an image. {ocr.INSTALL_HINT}"
+    key = f"{sha256}-img" if sha256 else ""
+    text = ocr.cached(key) if key else None
+    if text is None:
+        text = ocr.image_text(data)
+        if key:
+            ocr.save_cache(key, text)
+    if not _has_text(text):
+        return "", "Text recognition found no readable text in this image."
+    return text, ocr.OCR_NOTE
 
 
 # ---------------------------------------------------------------- recognising

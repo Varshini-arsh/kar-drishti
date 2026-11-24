@@ -65,7 +65,8 @@ need needed required require requirement long often kind type mention mentioned 
 SYNONYMS = {"applied": "apply", "application": "apply", "applying": "apply", "submitted": "submit",
             "submission": "submit", "filed": "submit", "file": "submit", "filing": "submit", "deadline": "within",
             "cap": "maximum", "limit": "maximum", "ceiling": "maximum", "annual": "year", "yearly": "year",
-            "accumulate": "accumulated", "permissible": "permitted"}
+            "accumulate": "accumulated", "permissible": "permitted",
+            "paid": "payable", "pay": "payable", "payment": "payable"}
 
 
 def _stem(w: str) -> str:

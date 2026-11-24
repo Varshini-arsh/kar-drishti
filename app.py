@@ -73,7 +73,7 @@ from pragya.revenue_agent import RevenueAgent  # noqa: E402
 from pragya.selftest_risk import risk_self_test  # noqa: E402
 from pragya.law_agent import LawAgent  # noqa: E402
 from pragya.library import Library, parse_document  # noqa: E402
-from pragya.llm import PragyaLLM, choose_model  # noqa: E402
+from pragya.llm import PragyaLLM, choose_groq_model, choose_model, groq_key  # noqa: E402
 from pragya.system import memory_gb  # noqa: E402
 
 _stamp_modules()
@@ -91,6 +91,22 @@ PROFILE = st.session_state.setdefault("officer_profile",
 
 
 # ====================================================================== data
+def _upload_dir() -> Path:
+    """Where added files are kept. Offline: data/uploads. Online demo: a private temporary folder per visitor,
+    so one visitor never sees another visitor's files."""
+    if not config.PUBLIC_DEMO:
+        return uploads.UPLOAD_DIR
+    import tempfile
+    import uuid
+    sid = st.session_state.setdefault("visitor_id", uuid.uuid4().hex)
+    d = Path(tempfile.gettempdir()) / "pragya_visitors" / sid
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+UP_DIR = _upload_dir()
+
+
 @st.cache_resource(show_spinner="Checking the case data on this computer...")
 def analyse_folder(path: str, stamp: float, gst_on: bool):
     case = load_case(path)
@@ -129,7 +145,7 @@ if st.session_state.get("con_key") != case_key:
             if getattr(demo_rev, attr) is not None:
                 uploads.load_into_duckdb(st.session_state["con"], uploads.TABLE_NAME[kind], getattr(demo_rev, attr))
     # every file added with "Add data" is loaded again (tables into DuckDB, documents for the Library)
-    st.session_state["up_tables"], st.session_state["up_docs"] = uploads.load_saved(st.session_state["con"])
+    st.session_state["up_tables"], st.session_state["up_docs"] = uploads.load_saved(st.session_state["con"], folder=UP_DIR)
     st.session_state["revenue"] = Revenue.from_tables(
         {t["kind"]: t["df"] for t in st.session_state["up_tables"]}, base=demo_rev)
     st.session_state["con_key"] = case_key
@@ -203,12 +219,41 @@ def queue_table(df: pd.DataFrame, key: str, height: int | str = "auto"):
 
 
 # ====================================================================== local AI model
+def _host_groq_key() -> str:
+    """Groq key set by whoever runs the app: GROQ_API_KEY environment variable, or Streamlit Cloud Secrets."""
+    key = groq_key()
+    if not key:
+        try:
+            key = str(st.secrets.get("GROQ_API_KEY", "")).strip()
+        except Exception:                           # no secrets file: that is fine
+            key = ""
+    return key
+
+
 def connect_model():
     """Find the local model server and pick an INSTALLED model (never downloads one).
     Returns (model or None, installed models, plain-English status)."""
     cfg = st.session_state.setdefault("llm_cfg", {"provider": config.LLM_PROVIDER, "url": config.LLM_BASE_URL,
                                                    "model": None, "wanted": None})
     llm, models, msg = None, [], ""
+    if cfg["provider"] == "ollama" and not cfg.get("auto_checked") and _host_groq_key():
+        cfg["auto_checked"] = True                  # no local model but a Groq key is set: use Groq
+        if not PragyaLLM("ollama", cfg["url"]).list_models():
+            cfg["provider"] = "groq"
+    if cfg["provider"] == "groq":
+        key = cfg.get("api_key") or _host_groq_key()
+        models = PragyaLLM("groq", api_key=key).list_models()
+        if models:
+            cfg["model"], note = choose_groq_model(models, cfg.get("wanted"))
+            llm = PragyaLLM("groq", model=cfg["model"], api_key=key)
+            msg = (note + " Questions and the facts needed to answer them are sent to Groq over the internet, "
+                   "so use it with demo data only. Numbers still come from code, never from the model.")
+        else:
+            cfg["model"] = None
+            msg = ("Groq is selected but not connected: add your Groq API key in Settings > Model "
+                   "(or set GROQ_API_KEY) and check the internet connection." if not key else
+                   "Groq did not accept the key or cannot be reached. Check the key and the internet connection.")
+        return llm, models, msg
     try:
         models = PragyaLLM(cfg["provider"], cfg["url"]).list_models()
     except LLMError as e:
@@ -228,6 +273,7 @@ def connect_model():
 
 
 LLM, MODELS, MODEL_MSG = connect_model()
+MODEL_WHERE = LLM.where if LLM is not None else "the local model"
 def build_library() -> Library:
     """Demo circulars + every document added with Add data (+ an uploaded section mapping table)."""
     lib = Library.from_folder(embed_url=st.session_state["llm_cfg"]["url"]
@@ -242,7 +288,8 @@ def build_library() -> Library:
     return lib
 
 
-lib_key = (st.session_state.get("con_key"), LLM is not None)
+lib_key = (st.session_state.get("con_key"), LLM is not None,      # rebuild when uploaded documents change
+           tuple(d["sha256"] for d in st.session_state.get("up_docs", [])))
 if st.session_state.get("lib_key") != lib_key:
     st.session_state["library"], st.session_state["lib_key"] = build_library(), lib_key
 LIB = st.session_state["library"]
@@ -252,41 +299,7 @@ AGENT = Lead(case, A, con, LLM, revenue=RevenueAgent(REV) if REV is not None els
 
 
 # ====================================================================== Add data (one button, any file)
-@st.dialog("Add data", width="large")
-def add_data_dialog():
-    st.caption("CSV, Excel, JSON, TXT, Word or PDF. Each file is recognised from its columns or text; correct the "
-               "type if needed, then load. Files stay on this computer.")
-    files = st.file_uploader("Files", accept_multiple_files=True, label_visibility="collapsed",
-                             type=["csv", "xlsx", "xls", "xlsm", "json", "txt", "md", "docx", "pdf"])
-    picks = []
-    for i, f in enumerate(files or []):
-        data = f.getvalue()
-        p = uploads.read_file(f.name, data)
-        with st.container(border=True):
-            size = f"{p.size / 1024:,.0f} KB" if p.size >= 1024 else f"{p.size} bytes"
-            st.markdown(f"**{ui.esc(f.name)}** · {size} · SHA-256 `{p.sha256[:12]}…`")
-            if p.note:
-                st.warning(p.note, icon=":material/warning:")
-            kinds = uploads.TABLE_KINDS if p.is_table else uploads.TEXT_KINDS
-            kind = st.selectbox(f"Recognised as: {p.kind}", kinds, index=kinds.index(p.kind) if p.kind in kinds else 0,
-                                key=f"kind-{p.sha256}", help=p.reason)
-            if p.is_table:
-                rows = sum(len(d) for _, d in p.tables)
-                with st.expander(f"Show records · {rows:,} row{'s' if rows != 1 else ''}"
-                                 + (f" in {len(p.tables)} sheets" if len(p.tables) > 1 else "")):
-                    st.dataframe(p.tables[0][1].head(20), hide_index=True, width="stretch")
-            elif p.text:
-                with st.expander(f"Show text · {len(p.text):,} characters"):
-                    st.text(p.text[:2000])
-        if p.is_table or p.text:
-            picks.append((p, data, kind))
-    if picks and st.button(f"Load {len(picks)} file{'s' if len(picks) != 1 else ''}", type="primary",
-                           icon=":material/check:"):
-        for p, data, kind in picks:
-            uploads.save_upload(p, data, kind, tables=[uploads.TABLE_NAME.get(kind, "uploaded table")] if p.is_table else [])
-        st.session_state["con_key"] = None            # rebuild the database with the new files
-        st.toast(f"Loaded {len(picks)} file(s).", icon=":material/check_circle:")
-        st.rerun()
+# (the Add data pop-up is defined further down, with its helpers)
 
 
 # ====================================================================== officer profile (sidebar)
@@ -319,7 +332,7 @@ def sidebar():
         st.page_link(PAGES["revenue"], label="Revenue", icon=":material/payments:")
         st.page_link(PAGES["library"], label="Library", icon=":material/menu_book:")
         st.page_link(PAGES["settings"], label="Settings", icon=":material/settings:")
-        if not config.PUBLIC_DEMO and st.button("Add data", icon=":material/add:", width="stretch"):
+        if st.button("Add data", icon=":material/add:", width="stretch"):
             add_data_dialog()
         st.divider()
         profile_box()
@@ -330,7 +343,9 @@ def sidebar():
 
 if config.PUBLIC_DEMO:
     st.markdown("<div style='font-size:.8rem;color:#8A8580;margin:0 0 1rem'>Online demo · synthetic data "
-                "only, uploads off, no AI model. The real tool runs fully offline on the officer's computer.</div>",
+                "only · uploads from your computer are off · AI wording by "
+                + ("Groq (cloud)" if st.session_state["llm_cfg"]["provider"] == "groq" else "no model") +
+                ". The real tool runs fully offline on the officer's computer.</div>",
                 unsafe_allow_html=True)
 
 
@@ -401,8 +416,8 @@ def render_answer(ans):
         if ans.check is not None:
             (st.success if ans.check.ok else st.error)("Checker: " + ans.check.summary(), icon=":material/verified:")
         if "general" in ans.source:
-            st.caption("The general-knowledge part was written by the local model and is not checked against your data.")
-        st.caption(f"Written by {'the local model' if ans.source in ('model', 'general') else 'code from the tool output'} · "
+            st.caption(f"The general-knowledge part was written by {MODEL_WHERE} and is not checked against your data.")
+        st.caption(f"Written by {MODEL_WHERE if ans.source in ('model', 'general') else 'code from the tool output'} · "
                    f"{ans.seconds:.1f} s. Numbers come from code run on the data, never from the AI's memory.")
 
 
@@ -421,7 +436,8 @@ def page_ask():
             st.write(item.question)
         with st.chat_message("assistant", avatar=BOT):
             render_answer(item)
-    q = st.chat_input("Ask about cases, revenue, circulars or any loaded table") or clicked
+    q = (st.chat_input("Ask about cases, revenue, circulars or any loaded table") or clicked
+         or st.session_state.pop("pending_q", None))
     if q:
         with st.chat_message("user", avatar=":material/person:"):
             st.write(q)
@@ -728,7 +744,7 @@ def data_settings():
     """Settings > Data: files added with "Add data", the audit log, the demo case, bank statements as a new
     case, a case folder and the GST add-on."""
     ui.section("Files added")
-    saved = uploads.read_manifest()
+    saved = uploads.read_manifest(UP_DIR)
     if not saved:
         st.caption("No files added yet. Use **Add data** in the sidebar.")
     loaded = {t["file"]: t for t in st.session_state.get("up_tables", [])}
@@ -739,7 +755,7 @@ def data_settings():
                     + (f" · table `{t['table']}` · {t['rows']:,} rows" if t else "")
                     + f"  \nSHA-256 `{e['sha256']}`")
         if c2.button("Remove", key=f"rm-{e['sha256']}", icon=":material/delete:"):
-            uploads.remove_upload(e["sha256"])
+            uploads.remove_upload(e["sha256"], folder=UP_DIR)
             st.session_state["con_key"] = None
             st.rerun()
     with st.expander("Audit log · last 100 events"):
@@ -920,7 +936,7 @@ def page_library():
 
 # ====================================================================== Settings
 def page_settings():
-    ui.header("Settings", "The local AI model, the data in use and your signature. Everything stays on this computer.")
+    ui.header("Settings", "The AI model, the data in use and your signature. With a local model, everything stays on this computer.")
     t_model, t_data, t_sig = st.tabs(["Model", "Data", "Signature"])
     with t_sig:
         st.caption("Set your name, designation, office and domain in the sidebar. This block ends every draft.")
@@ -934,25 +950,488 @@ def page_settings():
 def model_settings():
     cfg = st.session_state["llm_cfg"]
     free, total = memory_gb()
+    server = {"ollama": "Ollama (this computer)", "openai": "OpenAI-compatible (this computer)",
+              "groq": "Groq (cloud)"}.get(cfg["provider"], cfg["provider"])
     ui.kpis([("Model in use", cfg["model"] or "none", "connected" if LLM else "not connected", "" if LLM else "amber"),
              ("Free memory", f"{free:.1f} GB" if free is not None else "–",
               f"of {total:.1f} GB" if total is not None else "could not read"),
-             ("Server", "Ollama" if cfg["provider"] == "ollama" else "OpenAI-compatible", cfg["url"])])
+             ("Runtime", server, "needs internet" if cfg["provider"] == "groq" else cfg["url"])])
     st.caption(MODEL_MSG)
-    prov = st.selectbox("Runtime", ["ollama", "openai"], index=0 if cfg["provider"] == "ollama" else 1,
-                        format_func=lambda p: "Ollama" if p == "ollama" else "LM Studio / llama.cpp (OpenAI-compatible)")
-    url = st.text_input("Address", cfg["url"])
+    if config.PUBLIC_DEMO:
+        st.info("In the online demo the AI model is set by the host. The offline version lets you choose Ollama "
+                "on your own computer or Groq.", icon=":material/info:")
+        return
+    options = ["ollama", "openai", "groq"]
+    labels = {"ollama": "Ollama on this computer (offline, default)",
+              "openai": "LM Studio / llama.cpp on this computer (offline)",
+              "groq": "Groq cloud API (needs internet and a free API key)"}
+    prov = st.selectbox("Runtime", options, index=options.index(cfg["provider"]) if cfg["provider"] in options else 0,
+                        format_func=labels.get)
+    url, key = cfg["url"], cfg.get("api_key", "")
+    if prov == "groq":
+        st.warning("With Groq, each question and the facts needed to answer it are sent to Groq's servers over the "
+                   "internet. Use it with the synthetic demo data, not real taxpayer data. Detection, scores and "
+                   "numbers still come from code on this computer.", icon=":material/cloud:")
+        key = st.text_input("Groq API key", value=key, type="password",
+                            placeholder="Starts with gsk_ (free at console.groq.com)",
+                            help="Kept only while the app is open, never saved to disk. To avoid typing it each "
+                                 "time, set the GROQ_API_KEY environment variable or use run_app_groq.bat.")
+        if _host_groq_key() and not key:
+            st.caption("Using the key from the GROQ_API_KEY environment variable.")
+    else:
+        url = st.text_input("Address", cfg["url"] if cfg["provider"] != "groq" else config.LLM_BASE_URL)
     mdl = st.selectbox("Model", MODELS, index=MODELS.index(cfg["model"]) if cfg["model"] in MODELS else 0) \
-        if MODELS else None
-    if (prov, url) != (cfg["provider"], cfg["url"]) or (mdl and mdl != cfg["model"]):
-        cfg.update(provider=prov, url=url, wanted=mdl)
+        if MODELS and prov == cfg["provider"] else None
+    if (prov, url, key) != (cfg["provider"], cfg["url"], cfg.get("api_key", "")) or (mdl and mdl != cfg["model"]):
+        cfg.update(provider=prov, url=url, api_key=key, wanted=mdl if prov == cfg["provider"] else None)
         st.rerun()
-    st.caption("Default qwen3.5:4b (thinking off), fallback qwen2.5:3b; qwen3.5:9b only with 8 GB or more free. "
-               "Only addresses on this computer are allowed (a Department server needs the admin setting), and no "
-               "model is ever downloaded automatically. "
-               "Installed models: " + (", ".join(MODELS) if MODELS else "none found") + ".")
+    if prov == "groq":
+        st.caption("Groq runs open models (Llama, GPT-OSS, Qwen) very fast, so no strong laptop is needed. "
+                   "Available models: " + (", ".join(MODELS) if MODELS else "none yet (add the key)") + ".")
+    else:
+        st.caption("Default qwen3.5:4b (thinking off), fallback qwen2.5:3b; qwen3.5:9b only with 8 GB or more free. "
+                   "Only addresses on this computer are allowed (a Department server needs the admin setting), and no "
+                   "model is ever downloaded automatically. "
+                   "Installed models: " + (", ".join(MODELS) if MODELS else "none found") + ".")
 
 
+
+
+# ====================================================================== Add data pop-up (what is in use + add your own)
+import hashlib  # noqa: E402
+from pragya.library import DEMO_DIR as LIBRARY_DEMO_DIR  # noqa: E402
+from pragya.revenue import DEMO_DIR as REVENUE_DEMO_DIR  # noqa: E402
+
+CASE_FILES = [  # attribute, file, what it holds, used by
+    ("persons", "persons.csv", "People: name, PAN, city, occupation, age, phone, address", "Cases, Ask"),
+    ("firms", "firms.csv", "Firms: name, PAN, GSTIN, city, registration date, director, phone, address", "Cases, Ask"),
+    ("accounts", "accounts.csv", "Bank accounts: holder, bank, branch, type, opening date", "Cases, Ask"),
+    ("transactions", "transactions.csv", "Bank transactions: date, account, mode, CR/DR, amount, counterparty, narration",
+     "Cases, Ask"),
+    ("itr_filings", "itr_filings.csv", "Income-tax returns: PAN, tax year, filed, declared income, receipts, tax paid",
+     "Cases, Ask"),
+    ("gst_invoices", "gst_invoices.csv", "GST invoices between firms (optional add-on)", "Cases (GST add-on), Ask"),
+    ("gst_returns", "gst_returns.csv", "Monthly GST returns per firm (optional add-on)", "Cases (GST add-on), Ask"),
+]
+REVENUE_FILES = {
+    "revenue_targets.csv": "Collection targets by region, charge and range",
+    "collections.csv": "Collections this year, month by month",
+    "collections_last_year.csv": "Last year's collections, month by month",
+    "demand_register.csv": "Outstanding demands: taxpayer, amount, collected, disputed, stay, appeal",
+    "recovery_actions.csv": "Recovery actions taken against demands",
+    "refunds.csv": "Refunds by month and status",
+}
+STATEMENT_TEMPLATE = "Date,Narration,Chq./Ref.No.,Value Dt,Withdrawal Amt.,Deposit Amt.,Closing Balance\n"
+REVENUE_KINDS = ["revenue targets", "collections", "last year's collections", "demand register", "recovery actions",
+                 "refunds"]
+ANY_FILE = ["csv", "xlsx", "xls", "xlsm", "json", "txt", "md", "docx", "pdf", "png", "jpg", "jpeg", "tif", "tiff"]
+
+
+def _rel(path) -> str:
+    try:
+        return str(Path(path).resolve().relative_to(ROOT)).replace("\\", "/")
+    except ValueError:
+        return str(path)
+
+
+def _csv_info(path: Path) -> tuple[int, int]:
+    try:
+        df = pd.read_csv(path)
+        return len(df), len(df.columns)
+    except Exception:
+        return 0, 0
+
+
+def _header_csv(path: Path) -> str:
+    try:
+        return ",".join(pd.read_csv(path, nrows=0).columns) + "\n"
+    except Exception:
+        return ""
+
+
+def _nonce() -> int:
+    """Changes after every load, so the upload boxes start empty again."""
+    return st.session_state.setdefault("add_nonce", 0)
+
+
+def _ack(title: str, lines: list[str], where: str, questions: list[str] | None = None):
+    """Remember a confirmation and show it at the top of the pop-up."""
+    st.session_state["data_ack"] = {"title": title, "lines": lines, "where": where, "questions": questions or []}
+    st.session_state["add_nonce"] = _nonce() + 1
+    audit.log("approval", what="data added", detail=title)
+    st.rerun(scope="fragment")
+
+
+def _show_ack() -> bool:
+    ack = st.session_state.get("data_ack")
+    if not ack:
+        return False
+    st.success(f"**{ack['title']}**", icon=":material/check_circle:")
+    for ln in ack["lines"]:
+        st.markdown(f"- {ln}")
+    st.caption(f"Used by: {ack['where']}. Saved on this computer only.")
+    if ack.get("questions"):
+        st.markdown("**Ask about it** (opens Ask with the answer)")
+        for i, q in enumerate(ack["questions"]):
+            if st.button(q, key=f"ack-q{i}", icon=":material/forum:", width="stretch"):
+                st.session_state.pop("data_ack", None)
+                st.session_state["pending_q"] = q
+                st.switch_page(PAGES["ask"])
+    c1, c2, c3 = st.columns(3)
+    if c1.button("Add more", width="stretch", key="ack-more"):
+        st.session_state.pop("data_ack", None)
+        st.rerun(scope="fragment")
+    if c2.button("See results in Cases", width="stretch", key="ack-cases", icon=":material/person_search:"):
+        st.session_state.pop("data_ack", None)
+        st.switch_page(PAGES["cases"])
+    if c3.button("Done", type="primary", width="stretch", key="ack-done"):
+        st.session_state.pop("data_ack", None)
+        st.rerun()
+    return True
+
+
+def _files_uploader(key: str, types: list[str], kinds: list[str], where: str, default_kind: str | None = None):
+    """Upload -> show what was recognised and a preview -> confirm the type -> Add."""
+    files = st.file_uploader("Choose files", accept_multiple_files=True, type=types, key=f"up-{key}-{_nonce()}")
+    picks = []
+    for f in files or []:
+        data = f.getvalue()
+        p = uploads.read_file(f.name, data)
+        with st.container(border=True):
+            size = f"{p.size / 1024:,.0f} KB" if p.size >= 1024 else f"{p.size} bytes"
+            st.markdown(f"**{ui.esc(f.name)}** · {size}")
+            if p.note:
+                st.warning(p.note, icon=":material/warning:")
+            guess = p.kind if p.kind in kinds else (default_kind if default_kind in kinds else kinds[0])
+            kind = st.selectbox(f"Recognised as: {p.kind}. Change it if this is wrong.", kinds,
+                                index=kinds.index(guess), key=f"kind-{key}-{p.sha256}", help=p.reason)
+            if p.is_table:
+                rows = sum(len(d) for _, d in p.tables)
+                st.caption(f"{rows:,} row{'s' if rows != 1 else ''}"
+                           + (f" in {len(p.tables)} sheets" if len(p.tables) > 1 else "") + " · first 10 shown")
+                st.dataframe(p.tables[0][1].head(10), hide_index=True, width="stretch")
+            elif p.text:
+                st.caption(f"{len(p.text):,} characters of text · start shown")
+                st.text(p.text[:800])
+        if p.is_table or p.text:
+            picks.append((p, data, kind))
+    if picks and st.button(f"Add {len(picks)} file{'s' if len(picks) != 1 else ''}", type="primary",
+                           icon=":material/add:", key=f"load-{key}", width="stretch"):
+        lines = []
+        for p, data, kind in picks:
+            uploads.save_upload(p, data, kind, folder=UP_DIR,
+                                tables=[uploads.TABLE_NAME.get(kind, "uploaded table")] if p.is_table else [])
+            what = (f"{sum(len(d) for _, d in p.tables):,} rows" if p.is_table else f"{len(p.text):,} characters")
+            lines.append(f"**{p.name}** added as *{kind}* ({what})")
+        st.session_state["con_key"] = None            # rebuild the database with the new files
+        _ack(f"{len(picks)} file{'s' if len(picks) != 1 else ''} added", lines, where)
+
+
+def _in_use_now():
+    up_tables = st.session_state.get("up_tables", [])
+    up_docs = st.session_state.get("up_docs", [])
+    saved = uploads.read_manifest(UP_DIR)
+    uploaded_case = "uploaded_case" in st.session_state
+    folder = Path(st.session_state.get("case_folder", str(config.DEMO_DIR)))
+    case_src = ("Your statements" if uploaded_case
+                else "Demo case" if folder.resolve() == config.DEMO_DIR.resolve() else "Your folder")
+    lib_files = sorted(p for p in LIBRARY_DEMO_DIR.glob("*") if p.suffix in (".txt", ".md", ".docx", ".pdf")
+                       and not p.name.lower().startswith("readme"))
+    rev_files = sorted(REVENUE_DEMO_DIR.glob("*.csv"))
+    ui.kpis([("Case data", case_src, ("synthetic · " if case_src == "Demo case" else "")
+              + f"{S['holders']} people and firms"),
+             ("Revenue tables", f"{len(rev_files)} demo", f"+ {sum(t['kind'] in REVENUE_KINDS for t in up_tables)} yours"),
+             ("Library documents", f"{len(lib_files)} demo", f"+ {len(up_docs)} yours"),
+             ("Your files", f"{len(saved)}", "added before")])
+
+    with st.expander(f"Case data · {'uploaded statements' if uploaded_case else _rel(folder)} · used by Cases and Ask",
+                     expanded=True):
+        rows = []
+        for attr, fname, what, used in CASE_FILES:
+            df = getattr(case, attr, None)
+            if df is None or (attr.startswith("gst") and not len(df)):
+                continue
+            rows.append({"File": fname, "What it holds": what, "Rows": len(df), "Used by": used})
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+        pick = st.selectbox("Preview", [r["File"] for r in rows], key="add-case-preview")
+        attr = next(a for a, f, *_ in CASE_FILES if f == pick)
+        st.dataframe(getattr(case, attr).head(10), hide_index=True, width="stretch")
+    with st.expander(f"Revenue data · {_rel(REVENUE_DEMO_DIR)} · used by Revenue and Ask"):
+        rows = [{"File": fp.name, "What it holds": REVENUE_FILES.get(fp.name, ""), "Rows": _csv_info(fp)[0],
+                 "Source": "demo"} for fp in rev_files]
+        rows += [{"File": t["file"], "What it holds": t["kind"], "Rows": t["rows"], "Source": "your file"}
+                 for t in up_tables if t["kind"] in REVENUE_KINDS]
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    with st.expander(f"Library documents · {_rel(LIBRARY_DEMO_DIR)} · used by Library and Ask"):
+        rows = [{"Document": fp.name, "Source": "demo (fictitious)"} for fp in lib_files]
+        rows += [{"Document": d["name"], "Source": f"your file · {d['kind']}"} for d in up_docs]
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    with st.expander(f"Your files · {_rel(UP_DIR) if not config.PUBLIC_DEMO else 'private to this visit'}"):
+        if not saved:
+            st.caption("Nothing added yet.")
+        loaded = {t["file"]: t for t in up_tables}
+        for e in saved:
+            c1, c2 = st.columns([5, 1])
+            t = loaded.get(e["name"])
+            c1.markdown(f"**{ui.esc(e['name'])}** · {ui.esc(e['kind'])}"
+                        + (f" · {t['rows']:,} rows" if t else ""))
+            if c2.button("Remove", key=f"add-rm-{e['sha256']}", icon=":material/delete:"):
+                uploads.remove_upload(e["sha256"], folder=UP_DIR)
+                st.session_state["con_key"] = None
+                st.rerun()
+
+
+# ---------------------------------------------------------------- our synthetic datasets, ready to add with one click
+REVENUE_KIND_BY_FILE = {"revenue_targets.csv": "revenue targets", "collections.csv": "collections",
+                        "collections_last_year.csv": "last year's collections", "demand_register.csv": "demand register",
+                        "recovery_actions.csv": "recovery actions", "refunds.csv": "refunds"}
+REVENUE_QUESTION = {"revenue_targets.csv": "How much has been collected against the target so far?",
+                    "collections.csv": "How much has been collected against the target so far?",
+                    "collections_last_year.csv": "How does this year's collection compare with last year?",
+                    "demand_register.csv": "Which demands are the largest outstanding?",
+                    "recovery_actions.csv": "What recovery actions have been taken?",
+                    "refunds.csv": "How much has been refunded this year?"}
+SAMPLE_STATEMENTS_DIR = ROOT / "sample_statements"
+SAMPLE_DOCS_DIR = ROOT / "sample_documents"
+
+
+def _statement_holder(fp: Path) -> dict:
+    """Name from the file name; type, declared income and filing from the demo case when the person is in it."""
+    name = " ".join(fp.stem.replace("statement_", "").split("_")[:-1]) or fp.stem
+    info = {"holder_name": name, "holder_type": "PERSON", "declared_income": 0, "gross_receipts": 0, "filed": True}
+    try:
+        persons = pd.read_csv(config.DEMO_DIR / "persons.csv")
+        itr = pd.read_csv(config.DEMO_DIR / "itr_filings.csv")
+        m = persons[persons["name"].str.lower() == name.lower()]
+        if len(m):
+            r = itr[itr["holder_id"] == m.iloc[0]["person_id"]]
+            if len(r):
+                info.update(declared_income=float(r.iloc[0]["declared_income"] or 0),
+                            filed=bool(r.iloc[0]["filed"]), pan=m.iloc[0]["pan"])
+    except Exception:
+        pass
+    return info
+
+
+def _synthetic_files() -> list[dict]:
+    """Every synthetic / fictitious file in the project that can be added."""
+    out = []
+    for fp in sorted(REVENUE_DEMO_DIR.glob("*.csv")):
+        out.append({"group": "Revenue tables", "path": fp, "kind": REVENUE_KIND_BY_FILE.get(fp.name, "other table"),
+                    "what": REVENUE_FILES.get(fp.name, ""), "used": "Revenue page, Ask",
+                    "ask": REVENUE_QUESTION.get(fp.name, "How much has been collected against the target so far?")})
+    for fp in sorted(LIBRARY_DEMO_DIR.glob("*.txt")):
+        if fp.name.lower().startswith("readme"):
+            continue
+        out.append({"group": "Circulars (fictitious)", "path": fp, "kind": "circular / office order",
+                    "what": "Demo circular", "used": "Library page, Ask",
+                    "ask": "What do the circulars say about leave?" if "leave" in fp.name else
+                           "What is the travel allowance rule?"})
+    for fp in sorted(SAMPLE_DOCS_DIR.glob("*")):
+        if fp.suffix.lower() in (".pdf", ".jpg", ".jpeg", ".png"):
+            out.append({"group": "Scanned documents (fictitious)", "path": fp, "kind": "circular / office order",
+                        "what": "Scanned circular, read with text recognition (OCR)", "used": "Library page, Ask",
+                        "ask": "What is the hotel allowance?"})
+    for _, fname, what, _ in CASE_FILES:
+        fp = config.DEMO_DIR / fname
+        if fp.exists():
+            out.append({"group": "Case tables as extra datasets (optional)", "path": fp, "kind": "other table",
+                        "what": what, "used": "Ask (as an extra table)",
+                        "ask": f"How many rows are in {fp.stem}?"})
+    return out
+
+
+def _our_datasets():
+    saved = {e["sha256"] for e in uploads.read_manifest(UP_DIR)}
+    st.markdown(f"These are the synthetic (fake) datasets that come with {branding.APP_NAME}. Tick what you want, check the "
+                "preview, then press **Add**. Nothing is uploaded from your computer.")
+
+    # 1. case data for the Cases page: pick one
+    st.markdown("**1 · Case data for the Cases page** (pick one)")
+    stmts = sorted([*SAMPLE_STATEMENTS_DIR.glob("*.csv"), *SAMPLE_STATEMENTS_DIR.glob("*.xlsx")])
+    n_tx = _csv_info(config.DEMO_DIR / "transactions.csv")[0]
+    opts = ["Keep what is in use now",
+            f"Full synthetic case · data/demo_case · 185 people and firms, {n_tx:,} transactions, ITRs, GST",
+            f"{len(stmts)} sample bank statements · sample_statements · " + ", ".join(
+                _statement_holder(f)["holder_name"] for f in stmts)]
+    case_pick = st.radio("Case data", opts, key=f"syn-case-{_nonce()}", label_visibility="collapsed")
+    if case_pick == opts[1]:
+        with st.expander("Preview: data/demo_case"):
+            rows = [{"File": f, "What it holds": w, "Rows": _csv_info(config.DEMO_DIR / f)[0]}
+                    for _, f, w, _ in CASE_FILES if (config.DEMO_DIR / f).exists()]
+            st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+            st.dataframe(pd.read_csv(config.DEMO_DIR / "transactions.csv", nrows=8), hide_index=True, width="stretch")
+    elif case_pick == opts[2]:
+        with st.expander("Preview: sample statements"):
+            for fp in stmts:
+                h = _statement_holder(fp)
+                st.caption(f"{fp.name} · {h['holder_name']} · declared income "
+                           f"{inr(h['declared_income'])} · ITR {'filed' if h['filed'] else 'not filed'}")
+                p = uploads.read_file(fp.name, fp.read_bytes())
+                if p.tables:
+                    st.dataframe(p.tables[0][1].head(5), hide_index=True, width="stretch")
+
+    # 2. everything else: tick boxes per group
+    st.markdown("**2 · Other datasets** (tick any)")
+    files = _synthetic_files()
+    chosen = []
+    for group in dict.fromkeys(f["group"] for f in files):
+        items = [f for f in files if f["group"] == group]
+        with st.expander(f"{group} · {len(items)} file{'s' if len(items) != 1 else ''}",
+                         expanded=group == "Revenue tables"):
+            if st.checkbox("Select all", key=f"syn-all-{group}-{_nonce()}"):
+                default = True
+            else:
+                default = False
+            for f in items:
+                data = f["path"].read_bytes()
+                done = hashlib.sha256(data).hexdigest() in saved
+                label = f"**{f['path'].name}** · {f['what']} · goes to {f['used']}" + (" · *already added*" if done else "")
+                if st.checkbox(label, value=default, key=f"syn-{f['path'].name}-{_nonce()}-{default}"):
+                    chosen.append((f, data))
+    if chosen:
+        pv = st.selectbox("Check a ticked file before adding", [f["path"].name for f, _ in chosen],
+                          key=f"syn-preview-{_nonce()}")
+        f, data = next(x for x in chosen if x[0]["path"].name == pv)
+        p = uploads.read_file(f["path"].name, data)
+        if p.note:
+            st.warning(p.note, icon=":material/warning:")
+        if p.tables:
+            st.dataframe(p.tables[0][1].head(8), hide_index=True, width="stretch")
+        elif p.text:
+            st.text(p.text[:600])
+
+    n = len(chosen) + (case_pick != opts[0])
+    if st.button(f"Add {n} selected" if n else "Add selected", type="primary", icon=":material/add:",
+                 disabled=not n, width="stretch", key=f"syn-go-{_nonce()}"):
+        lines, where, questions = [], [], []
+        with st.spinner("Adding the datasets and running the checks..."):
+            if case_pick == opts[1]:
+                st.session_state.pop("uploaded_case", None)
+                st.session_state["case_folder"] = str(config.DEMO_DIR)
+                lines.append("**Full synthetic case** (data/demo_case) is now the case data")
+                where.append("Cases")
+                questions += ["Which cases are high risk?", "Show the round-tripping chains"]
+            elif case_pick == opts[2]:
+                from kar_drishti.statements import build_case_from_statements
+                items = [{"file_name": fp.name, "data": fp.read_bytes(), **_statement_holder(fp)} for fp in stmts]
+                up = build_case_from_statements(items, "Sample statements")
+                st.session_state["uploaded_case"] = (up, risk.analyze(up, include_gst=GST_ON))
+                lines.append(f"**{len(stmts)} sample bank statements** are now the case data ("
+                             + ", ".join(i["holder_name"] for i in items) + ")")
+                where.append("Cases")
+                questions += ["Which cases are high risk?", f"Explain the case of {items[-1]['holder_name']}"]
+            for f, data in chosen:
+                p = uploads.read_file(f["path"].name, data)
+                if not (p.is_table or p.text):
+                    lines.append(f"**{f['path'].name}** could not be read: {p.note or 'no content'}")
+                    continue
+                uploads.save_upload(p, data, f["kind"], folder=UP_DIR,
+                                    tables=[uploads.TABLE_NAME.get(f["kind"], "uploaded table")] if p.is_table else [])
+                what = f"{sum(len(d) for _, d in p.tables):,} rows" if p.is_table else f"{len(p.text):,} characters"
+                lines.append(f"**{f['path'].name}** added as *{f['kind']}* ({what})")
+                where.append(f["used"])
+                questions.append(f["ask"])
+        st.session_state["con_key"] = None
+        _ack(f"{n} dataset{'s' if n != 1 else ''} added", lines,
+             ", ".join(dict.fromkeys(", ".join(where).split(", "))), list(dict.fromkeys(questions))[:4])
+
+
+def _own_files():
+    st.markdown("**Optional.** Add your own files from this computer. Pick what kind of data it is:")
+    kind = st.segmented_control("Kind", ["Bank statements", "Case folder", "Revenue tables", "Circulars & documents",
+                                         "Any other file"], default="Bank statements", key="own-kind",
+                                label_visibility="collapsed")
+    if kind == "Bank statements":
+        st.caption("For the Cases page. One file per bank account, CSV or Excel exported from net banking. Date, "
+                   "narration, debit and credit columns are found automatically.")
+        st.download_button("Statement template", STATEMENT_TEMPLATE, "statement_template.csv",
+                           icon=":material/download:", key="tpl-stmt")
+        files = st.file_uploader("Statements", type=["csv", "xlsx", "xls"], accept_multiple_files=True,
+                                 key=f"add-stmts-{_nonce()}")
+        items = []
+        for i, fl in enumerate(files or []):
+            guess = " ".join(Path(fl.name).stem.replace("statement_", "").split("_")[:-1]) or Path(fl.name).stem
+            with st.container(border=True):
+                st.markdown(f"**{ui.esc(fl.name)}**")
+                prev = uploads.read_file(fl.name, fl.getvalue())
+                if prev.tables:
+                    st.dataframe(prev.tables[0][1].head(5), hide_index=True, width="stretch")
+                c = st.columns([3, 1.3, 1.8, 1])
+                name = c[0].text_input("Account holder", guess, key=f"add-n{i}")
+                htype = c[1].selectbox("Type", ["PERSON", "FIRM"], key=f"add-t{i}")
+                inc = c[2].number_input("Declared income (₹)", value=0, step=50000, key=f"add-i{i}")
+                filed = c[3].checkbox("ITR filed", value=True, key=f"add-f{i}")
+            items.append({"file_name": fl.name, "data": fl.getvalue(), "holder_name": name, "holder_type": htype,
+                          "declared_income": inc, "gross_receipts": inc if htype == "FIRM" else 0, "filed": filed})
+        if items and st.button(f"Add {len(items)} statement{'s' if len(items) != 1 else ''} and check them",
+                               type="primary", icon=":material/add:", key="add-stmt-go", width="stretch"):
+            from kar_drishti.statements import build_case_from_statements
+            try:
+                with st.spinner("Reading the statements..."):
+                    up = build_case_from_statements(items, "Uploaded statements")
+                    st.session_state["uploaded_case"] = (up, risk.analyze(up, include_gst=GST_ON))
+            except Exception as ex:
+                st.error(f"Could not read the statements: {ex}")
+            else:
+                _ack(f"{len(items)} bank statement{'s' if len(items) != 1 else ''} added",
+                     [f"**{it['file_name']}** for {it['holder_name']}" for it in items], "Cases, Ask",
+                     ["Which cases are high risk?", f"Explain the case of {items[0]['holder_name']}"])
+    elif kind == "Case folder":
+        st.caption("A folder with persons.csv, firms.csv, accounts.csv, transactions.csv and itr_filings.csv "
+                   "(optional gst_invoices.csv, gst_returns.csv), same columns as data/demo_case.")
+        cols = st.columns(3)
+        for i, (_, fname, _, _) in enumerate(CASE_FILES[:5]):
+            hdr = _header_csv(config.DEMO_DIR / fname)
+            if hdr:
+                cols[i % 3].download_button(fname, hdr, fname, key=f"tpl-{fname}", icon=":material/download:",
+                                            width="stretch")
+        folder = st.text_input("Folder path on this computer", "", key="add-folder", placeholder="e.g. D:\\cases\\ward2")
+        if st.button("Add this folder", type="primary", key="add-folder-go", width="stretch", icon=":material/add:"):
+            if folder and (Path(folder) / "transactions.csv").exists():
+                st.session_state.pop("uploaded_case", None)
+                st.session_state["case_folder"] = folder
+                _ack("Case folder added", [f"`{folder}`"], "Cases, Ask", ["Which cases are high risk?"])
+            else:
+                st.error("transactions.csv not found in that folder.")
+    elif kind == "Revenue tables":
+        st.caption("Targets, collections, demand register, recovery actions or refunds (CSV or Excel). A file replaces "
+                   "the demo table of the same type.")
+        with st.expander("Templates"):
+            cols = st.columns(3)
+            for i, fp in enumerate(sorted(REVENUE_DEMO_DIR.glob("*.csv"))):
+                cols[i % 3].download_button(fp.name, _header_csv(fp), fp.name, key=f"tpl-{fp.name}",
+                                            icon=":material/download:", width="stretch")
+        _files_uploader("rev", ["csv", "xlsx", "xls", "xlsm"], REVENUE_KINDS, "Revenue page, Ask")
+    elif kind == "Circulars & documents":
+        st.caption("Circulars, office orders or Act text: PDF (scanned too), Word, TXT or a photo.")
+        _files_uploader("docs", ["pdf", "docx", "txt", "md", "png", "jpg", "jpeg", "tif", "tiff"],
+                        uploads.TEXT_KINDS, "Library page, Ask", default_kind="circular / office order")
+    elif kind == "Any other file":
+        st.caption("Any other table or document you want to ask questions about. Not used by the risk checks.")
+        _files_uploader("other", ANY_FILE, uploads.ALL_KINDS, "Ask", default_kind="other table")
+
+
+@st.dialog("Add data", width="large")
+def add_data_dialog():
+    if _show_ack():
+        return
+    st.caption(f"Add {branding.APP_NAME}'s synthetic datasets with one click, see what is in use, or upload your own files "
+               "(any format: tables, PDFs, Word, text or photos). "
+               "Everything stays on this computer.")
+    t1, t2, t3 = st.tabs(["Our datasets", "In use now", "Upload your own (optional)"])
+    with t1:
+        _our_datasets()
+    with t2:
+        _in_use_now()
+    with t3:
+        if config.PUBLIC_DEMO:
+            st.info("Uploading files from your computer is turned off in this online demo, so no real data is ever "
+                    "sent here. Use **Our datasets**, or download the offline version, which accepts any file "
+                    "(CSV, Excel, JSON, TXT, Word, PDF, photos) and keeps it on your own computer.",
+                    icon=":material/lock:")
+        else:
+            _own_files()
 
 
 # ====================================================================== navigation

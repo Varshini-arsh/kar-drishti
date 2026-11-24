@@ -76,8 +76,13 @@ NUMERIC_TYPES = ("INT", "DOUBLE", "DECIMAL", "FLOAT", "REAL", "NUMERIC", "HUGEIN
 GROUP_WORDS = re.compile(r"\b(by|per|each|wise|for every)\b", re.I)
 
 
+ABBREV = {"amt": "amount", "qty": "quantity", "bal": "balance", "dt": "date", "num": "number", "val": "value",
+          "txn": "transaction", "dr": "debit", "cr": "credit", "wdl": "withdrawal", "dep": "deposit"}
+
+
 def _col_words(c: str) -> set[str]:
-    return _words(c.replace("_", " "))
+    """Words of a column name, with common abbreviations spelt out (deposit_amt -> deposit, amount)."""
+    return {ABBREV.get(w, w) for w in _words(c.replace("_", " "))}
 
 
 def simple_sql(question: str, con) -> tuple[str, str] | None:
@@ -97,7 +102,8 @@ def simple_sql(question: str, con) -> tuple[str, str] | None:
     num = [c for c, ty in cols if ty.upper().startswith(NUMERIC_TYPES) and not c.endswith("_id")]
     txt = [c for c, ty in cols if not ty.upper().startswith(NUMERIC_TYPES)]
     mentioned = sorted([c for c, _ in cols if _col_words(c) and _col_words(c) <= qw], key=len, reverse=True)
-    measure = next((c for c in mentioned if c in num), None) or next(
+    overlap = sorted(((len(_col_words(c) & qw), c) for c in num if _col_words(c) & qw), key=lambda x: -x[0])
+    measure = next((c for c in mentioned if c in num), None) or (overlap[0][1] if overlap else None) or next(
         (c for c in num if re.search(r"amount|value|collect|demand|target|refund|total", c)), num[0] if num else None)
     group = None
     m = GROUP_WORDS.search(low)
@@ -202,6 +208,9 @@ class DataAgent:
         fig = charts.auto_chart(df) if 2 <= len(df) <= 60 else None      # a chart only when it helps
         must = [text.split(": ", 1)[1].rstrip(".")] if df.shape == (1, 1) else \
             ([f"{len(df):,} record"] if len(df) > 1 else [])
+        if len(df) >= 1 and df.shape[1] <= 3:       # small table: the top row's values must appear too
+            must += [v for v in (ln.split(": ", 1)[1] for ln in df_lines(df, 1)[0].split(" · ") if ": " in ln)
+                     if v not in must][:3]
         return AgentResult(self.name, "database query", ok=True, facts=facts, template=text, checked=checked,
                            records=df, sql=sql, steps=steps, fig=fig, must=must)
 

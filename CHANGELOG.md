@@ -78,3 +78,20 @@ Plain-English notes, one line per change.
 - Fixed lines are always kept (e.g. "The officer decides the action.", the ageing total, the highest month).
 - Count / total / average questions on a table use the exact built-in query first (no model call), including "people and firms" style questions.
 - Greeting shows "A. Sharma" instead of "A.."
+
+- OCR update: scanned PDFs and photos of documents (PNG/JPG/TIFF) are now read with offline text recognition (RapidOCR + pypdfium2, optional). Results cached by SHA-256; officer is told to check figures against the original. Added sample_documents/ and tests/test_pragya_ocr.py. Data agent: small tables must include the top row values (fixes self-test 22).
+
+## Add data pop-up: synthetic datasets in one click
+- **Add data** opens a pop-up with three tabs: **Our datasets** (tick the synthetic files that come with the app and press Add: the full demo case or the 3 sample statements, revenue tables, demo circulars, scanned documents, and the case tables as extra datasets), **In use now** (what is loaded, from which folder, row counts, previews, Remove), and **Upload your own (optional)** (bank statements, case folder, revenue tables, circulars and documents, or any other file: CSV, Excel, JSON, TXT, Word, PDF, photos).
+- After adding, the pop-up confirms what was added and where it is used, offers ready questions that open Ask with the answer, and a button to see the results in Cases.
+- The previous `app.py` is kept as `app.py.bak_before_data_page`.
+
+## Optional Groq cloud model + sharing
+- **Settings > Model** has a third runtime: **Groq cloud API** (needs internet and a free API key; the key is kept only while the app is open). A clear warning says questions and the facts needed to answer them go to Groq, so use it with demo data only. Ollama (offline) stays the default; scores and numbers always come from code.
+- If Ollama is not found but `GROQ_API_KEY` is set, Pragya uses Groq automatically. `run_app_groq.bat` asks for the key and starts the app with Groq.
+- `HOW_TO_SHARE.md` explains how someone else runs Pragya on their own computer; `share/Pragya_share.zip` is a clean copy to send (no uploads, audit log, profile or backups).
+
+## Online demo on Streamlit Community Cloud with Groq
+- In the online demo (public_demo.flag), **Add data** is shown: visitors add the built-in synthetic datasets, and what they add is kept in a private temporary folder for their visit only. Uploading from a visitor's computer stays off.
+- The online demo uses Groq automatically when `GROQ_API_KEY` is set in Streamlit Cloud **Secrets** (or the environment); visitors cannot change the model. The top line says AI wording is by Groq (cloud).
+- `streamlit_cloud/` is updated to this version (plus OCR packages and `packages.txt`); `HOW_TO_DEPLOY_STREAMLIT.md` has the steps.
